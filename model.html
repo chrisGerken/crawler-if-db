@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>crawler-if-db — Developer API Reference</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 960px; margin: 2em auto; padding: 0 1em; color: #222; }
+  h1 { border-bottom: 2px solid #444; padding-bottom: 0.3em; }
+  h2 { border-bottom: 1px solid #aaa; margin-top: 2em; }
+  h3 { margin-top: 1.5em; color: #333; }
+  h4 { margin-top: 1em; color: #555; font-style: italic; }
+  table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 0.9em; }
+  th, td { border: 1px solid #ccc; padding: 0.4em 0.7em; text-align: left; vertical-align: top; }
+  th { background: #f0f0f0; font-weight: bold; }
+  pre { background: #f5f5f5; border: 1px solid #ddd; padding: 0.8em 1em; overflow-x: auto; border-radius: 3px; }
+  code { font-family: "Courier New", monospace; font-size: 0.9em; }
+  pre code { font-size: 0.85em; }
+  .pkg { color: #666; font-size: 0.85em; }
+</style>
+</head>
+<body>
+
+<h1>crawler-if-db — Developer API Reference</h1>
+
+<h2>Introduction</h2>
+<p>
+  <strong>CrawlerIf</strong> is an embedded HSQLDB persistence library for a web-crawler
+  image-gallery application. The single entry point is
+  <code>com.gerken.db.persist.PersistCrawlerIf</code>; all database access goes through
+  this class. JSON serialisation uses the Jettison library
+  (<code>org.codehaus.jettison.json.JSONObject</code>).
+</p>
+<p>To use this library as a Maven dependency, add the following stanza to your
+<code>pom.xml</code>:</p>
+<pre><code>&lt;dependency&gt;
+    &lt;groupId&gt;org.gerken&lt;/groupId&gt;
+    &lt;artifactId&gt;crawler-if-db&lt;/artifactId&gt;
+    &lt;version&gt;1.0-SNAPSHOT&lt;/version&gt;
+&lt;/dependency&gt;</code></pre>
+
+<h2>Lifecycle</h2>
+<p>
+  <code>PersistCrawlerIf.open()</code> is ref-counted: multiple callers that open the
+  same database path share one underlying connection. Each caller must call
+  <code>close()</code> to decrement the ref-count; the physical connection is released
+  only when the count reaches zero.
+</p>
+<pre><code>PersistCrawlerIf db = PersistCrawlerIf.open("/path/to/db");
+try {
+    // ... CRUD calls ...
+} finally {
+    db.close();
+}</code></pre>
+<p>
+  All tables and indexes are created automatically on the first <code>open()</code> call
+  if they do not already exist.
+</p>
+
+<h2>Data Model</h2>
+
+<h3>Poster</h3>
+<p>The owner and producer of one or more galleries.</p>
+<p class="pkg">Bean: <code>com.gerken.db.bean.Poster</code> &nbsp;|&nbsp;
+   Cursor: <code>com.gerken.db.cursor.PosterCursor</code></p>
+<table>
+  <tr><th>Field</th><th>Java type</th><th>PK</th><th>Nullable</th><th>Indexed</th><th>Description</th></tr>
+  <tr><td>name</td><td>String</td><td>yes</td><td>no</td><td>yes (PK)</td><td>The poster's user id</td></tr>
+  <tr><td>url</td><td>String</td><td>no</td><td>yes</td><td>no</td><td>The url to the primary page of the poster's galleries</td></tr>
+  <tr><td>color</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>W (whitelisted), B (blacklisted) or G (no decision yet, default) indicating crawl priorities for newly posted galleries</td></tr>
+</table>
+
+<h3>Gallery</h3>
+<p>A collection of images posted by a user and linked to by some number of gallery pages.</p>
+<p class="pkg">Bean: <code>com.gerken.db.bean.Gallery</code> &nbsp;|&nbsp;
+   Cursor: <code>com.gerken.db.cursor.GalleryCursor</code></p>
+<table>
+  <tr><th>Field</th><th>Java type</th><th>PK</th><th>Nullable</th><th>Indexed</th><th>Description</th></tr>
+  <tr><td>id</td><td>String</td><td>yes</td><td>no</td><td>yes (PK)</td><td>The gallery id</td></tr>
+  <tr><td>poster</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>The poster's user name</td></tr>
+  <tr><td>name</td><td>String</td><td>no</td><td>yes</td><td>no</td><td>The gallery name</td></tr>
+  <tr><td>url</td><td>String</td><td>no</td><td>yes</td><td>no</td><td>The url of the gallery page</td></tr>
+  <tr><td>attrs</td><td>String</td><td>no</td><td>yes</td><td>no</td><td>|-separated list of gallery categories and tags</td></tr>
+  <tr><td>images</td><td>Integer</td><td>no</td><td>yes</td><td>no</td><td>Number of images in the gallery</td></tr>
+  <tr><td>pages</td><td>Integer</td><td>no</td><td>yes</td><td>no</td><td>Number of pages in the gallery</td></tr>
+  <tr><td>pagesSeen</td><td>Integer</td><td>no</td><td>yes</td><td>no</td><td>Number of gallery pages that have been processed</td></tr>
+  <tr><td>quality</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>Image size. One of S, M, L, XL</td></tr>
+  <tr><td>added</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>When this gallery was added to the site (or modified) in yyyy-mm-dd format</td></tr>
+  <tr><td>state</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>Process state for crawl. One of: ID (identified as new from gallery page results list), CA (categorized after crawling its first gallery page), NA (navigating through all of its gallery pages), IN (inventoried after completing crawl of all gallery pages)</td></tr>
+</table>
+
+<h3>Image</h3>
+<p>An image in a gallery.</p>
+<p class="pkg">Bean: <code>com.gerken.db.bean.Image</code> &nbsp;|&nbsp;
+   Cursor: <code>com.gerken.db.cursor.ImageCursor</code></p>
+<table>
+  <tr><th>Field</th><th>Java type</th><th>PK</th><th>Nullable</th><th>Indexed</th><th>Description</th></tr>
+  <tr><td>pageId</td><td>String</td><td>yes</td><td>no</td><td>yes (PK)</td><td>The image page id</td></tr>
+  <tr><td>galleryId</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>The gallery id</td></tr>
+  <tr><td>pageUrl</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>The url of the image page</td></tr>
+  <tr><td>imageId</td><td>String</td><td>no</td><td>yes</td><td>no</td><td>The image id. Should be the same as the id of the image page that displays the image.</td></tr>
+  <tr><td>imageUrl</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>The url of the image</td></tr>
+  <tr><td>filename</td><td>String</td><td>no</td><td>yes</td><td>no</td><td>The local file name (not the absolute path) of the image</td></tr>
+  <tr><td>score</td><td>Integer</td><td>no</td><td>yes</td><td>yes</td><td>A user-provided ranking of the image. unscored: -1; poor: 0; ok: 1; good: 2</td></tr>
+  <tr><td>state</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>Process state for crawl. One of: GP (image discovered on gallery page), IP (information gathered from image page), DL (image downloaded)</td></tr>
+</table>
+
+<h3>GalleryAttr</h3>
+<p>A string indicating the subject matter or context of the images in a gallery.
+   It can be used to automatically prioritize crawl navigation.</p>
+<p class="pkg">Bean: <code>com.gerken.db.bean.GalleryAttr</code> &nbsp;|&nbsp;
+   Cursor: <code>com.gerken.db.cursor.GalleryAttrCursor</code></p>
+<table>
+  <tr><th>Field</th><th>Java type</th><th>PK</th><th>Nullable</th><th>Indexed</th><th>Description</th></tr>
+  <tr><td>name</td><td>String</td><td>yes</td><td>no</td><td>yes (PK)</td><td>The attribute itself</td></tr>
+  <tr><td>good</td><td>Boolean</td><td>no</td><td>yes</td><td>yes</td><td>Whether there is a bias in favor of galleries with this attribute</td></tr>
+  <tr><td>bad</td><td>Boolean</td><td>no</td><td>yes</td><td>yes</td><td>Whether there is a bias against galleries with this attribute</td></tr>
+</table>
+
+<h2>API Reference — PersistCrawlerIf</h2>
+
+<h3>Lifecycle and shared methods</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>static PersistCrawlerIf open(String dbPath) throws SQLException</code></td><td>Open (or join) the database at <code>dbPath</code>. Creates all tables on first call. Ref-counted.</td></tr>
+  <tr><td><code>void close() throws SQLException</code></td><td>Decrement ref-count; close physical connection when it reaches zero.</td></tr>
+  <tr><td><code>static Connection getConnection()</code></td><td>Returns the active connection (used internally by cursor classes).</td></tr>
+  <tr><td><code>PreparedStatement prepare(String sql) throws SQLException</code></td><td>Return a cached or freshly prepared statement for <code>sql</code>.</td></tr>
+  <tr><td><code>void execute(PreparedStatement ps) throws SQLException</code></td><td>Execute a client-prepared statement.</td></tr>
+  <tr><td><code>void recycle(PreparedStatement ps)</code></td><td>Return a statement to the cache after use.</td></tr>
+  <tr><td><code>long getValue(String sql) throws SQLException</code></td><td>Execute a scalar-returning SQL query and return the first column as a long.</td></tr>
+  <tr><td><code>void backup(String backupPath) throws Exception</code></td><td>Write one JSON-lines file per type to <code>backupPath</code> (parallel threads).</td></tr>
+  <tr><td><code>void restore(String backupPath) throws Exception</code></td><td>Drop and recreate all tables, then reload from JSON files in <code>backupPath</code> (parallel threads).</td></tr>
+</table>
+
+<h3>Poster</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>void createPoster() throws SQLException</code></td><td>Create the Poster table and its indexes if absent.</td></tr>
+  <tr><td><code>void dropPoster() throws SQLException</code></td><td>Drop the Poster table.</td></tr>
+  <tr><td><code>PosterCursor selectPoster(String clauses) throws SQLException</code></td><td>Open a cursor over matching Poster rows.</td></tr>
+  <tr><td><code>int insert(Poster row) throws SQLException</code></td><td>Insert one row.</td></tr>
+  <tr><td><code>int[] insert(Poster[] rows) throws SQLException</code></td><td>Batch-insert an array.</td></tr>
+  <tr><td><code>int[] insert(Poster[] rows, int offset, int len) throws SQLException</code></td><td>Batch-insert a slice.</td></tr>
+  <tr><td><code>int upsert(Poster row) throws SQLException</code></td><td>Insert or update one row.</td></tr>
+  <tr><td><code>int[] upsert(Poster[] rows) throws SQLException</code></td><td>Batch-upsert an array.</td></tr>
+  <tr><td><code>int[] upsert(Poster[] rows, int offset, int len) throws SQLException</code></td><td>Batch-upsert a slice.</td></tr>
+  <tr><td><code>int delete(Poster row) throws SQLException</code></td><td>Delete by primary key of <code>row</code>.</td></tr>
+  <tr><td><code>int[] delete(Poster[] rows) throws SQLException</code></td><td>Batch-delete an array.</td></tr>
+  <tr><td><code>int[] delete(Poster[] rows, int offset, int len) throws SQLException</code></td><td>Batch-delete a slice.</td></tr>
+  <tr><td><code>int deletePoster(String name) throws SQLException</code></td><td>Delete by primary key.</td></tr>
+  <tr><td><code>Poster getPoster(String name) throws SQLException</code></td><td>Fetch by primary key; returns <code>null</code> if not found.</td></tr>
+</table>
+
+<h3>Gallery</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>void createGallery() throws SQLException</code></td><td>Create the Gallery table and its indexes if absent.</td></tr>
+  <tr><td><code>void dropGallery() throws SQLException</code></td><td>Drop the Gallery table.</td></tr>
+  <tr><td><code>GalleryCursor selectGallery(String clauses) throws SQLException</code></td><td>Open a cursor over matching Gallery rows.</td></tr>
+  <tr><td><code>int insert(Gallery row) throws SQLException</code></td><td>Insert one row.</td></tr>
+  <tr><td><code>int[] insert(Gallery[] rows) throws SQLException</code></td><td>Batch-insert an array.</td></tr>
+  <tr><td><code>int[] insert(Gallery[] rows, int offset, int len) throws SQLException</code></td><td>Batch-insert a slice.</td></tr>
+  <tr><td><code>int upsert(Gallery row) throws SQLException</code></td><td>Insert or update one row.</td></tr>
+  <tr><td><code>int[] upsert(Gallery[] rows) throws SQLException</code></td><td>Batch-upsert an array.</td></tr>
+  <tr><td><code>int[] upsert(Gallery[] rows, int offset, int len) throws SQLException</code></td><td>Batch-upsert a slice.</td></tr>
+  <tr><td><code>int delete(Gallery row) throws SQLException</code></td><td>Delete by primary key of <code>row</code>.</td></tr>
+  <tr><td><code>int[] delete(Gallery[] rows) throws SQLException</code></td><td>Batch-delete an array.</td></tr>
+  <tr><td><code>int[] delete(Gallery[] rows, int offset, int len) throws SQLException</code></td><td>Batch-delete a slice.</td></tr>
+  <tr><td><code>int deleteGallery(String id) throws SQLException</code></td><td>Delete by primary key.</td></tr>
+  <tr><td><code>Gallery getGallery(String id) throws SQLException</code></td><td>Fetch by primary key; returns <code>null</code> if not found.</td></tr>
+</table>
+
+<h3>Image</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>void createImage() throws SQLException</code></td><td>Create the Image table and its indexes if absent.</td></tr>
+  <tr><td><code>void dropImage() throws SQLException</code></td><td>Drop the Image table.</td></tr>
+  <tr><td><code>ImageCursor selectImage(String clauses) throws SQLException</code></td><td>Open a cursor over matching Image rows.</td></tr>
+  <tr><td><code>int insert(Image row) throws SQLException</code></td><td>Insert one row.</td></tr>
+  <tr><td><code>int[] insert(Image[] rows) throws SQLException</code></td><td>Batch-insert an array.</td></tr>
+  <tr><td><code>int[] insert(Image[] rows, int offset, int len) throws SQLException</code></td><td>Batch-insert a slice.</td></tr>
+  <tr><td><code>int upsert(Image row) throws SQLException</code></td><td>Insert or update one row.</td></tr>
+  <tr><td><code>int[] upsert(Image[] rows) throws SQLException</code></td><td>Batch-upsert an array.</td></tr>
+  <tr><td><code>int[] upsert(Image[] rows, int offset, int len) throws SQLException</code></td><td>Batch-upsert a slice.</td></tr>
+  <tr><td><code>int delete(Image row) throws SQLException</code></td><td>Delete by primary key of <code>row</code>.</td></tr>
+  <tr><td><code>int[] delete(Image[] rows) throws SQLException</code></td><td>Batch-delete an array.</td></tr>
+  <tr><td><code>int[] delete(Image[] rows, int offset, int len) throws SQLException</code></td><td>Batch-delete a slice.</td></tr>
+  <tr><td><code>int deleteImage(String pageId) throws SQLException</code></td><td>Delete by primary key.</td></tr>
+  <tr><td><code>Image getImage(String pageId) throws SQLException</code></td><td>Fetch by primary key; returns <code>null</code> if not found.</td></tr>
+</table>
+
+<h3>GalleryAttr</h3>
+<table>
+  <tr><th>Signature</th><th>Description</th></tr>
+  <tr><td><code>void createGalleryAttr() throws SQLException</code></td><td>Create the GalleryAttr table and its indexes if absent.</td></tr>
+  <tr><td><code>void dropGalleryAttr() throws SQLException</code></td><td>Drop the GalleryAttr table.</td></tr>
+  <tr><td><code>GalleryAttrCursor selectGalleryAttr(String clauses) throws SQLException</code></td><td>Open a cursor over matching GalleryAttr rows.</td></tr>
+  <tr><td><code>int insert(GalleryAttr row) throws SQLException</code></td><td>Insert one row.</td></tr>
+  <tr><td><code>int[] insert(GalleryAttr[] rows) throws SQLException</code></td><td>Batch-insert an array.</td></tr>
+  <tr><td><code>int[] insert(GalleryAttr[] rows, int offset, int len) throws SQLException</code></td><td>Batch-insert a slice.</td></tr>
+  <tr><td><code>int upsert(GalleryAttr row) throws SQLException</code></td><td>Insert or update one row.</td></tr>
+  <tr><td><code>int[] upsert(GalleryAttr[] rows) throws SQLException</code></td><td>Batch-upsert an array.</td></tr>
+  <tr><td><code>int[] upsert(GalleryAttr[] rows, int offset, int len) throws SQLException</code></td><td>Batch-upsert a slice.</td></tr>
+  <tr><td><code>int delete(GalleryAttr row) throws SQLException</code></td><td>Delete by primary key of <code>row</code>.</td></tr>
+  <tr><td><code>int[] delete(GalleryAttr[] rows) throws SQLException</code></td><td>Batch-delete an array.</td></tr>
+  <tr><td><code>int[] delete(GalleryAttr[] rows, int offset, int len) throws SQLException</code></td><td>Batch-delete a slice.</td></tr>
+  <tr><td><code>int deleteGalleryAttr(String name) throws SQLException</code></td><td>Delete by primary key.</td></tr>
+  <tr><td><code>GalleryAttr getGalleryAttr(String name) throws SQLException</code></td><td>Fetch by primary key; returns <code>null</code> if not found.</td></tr>
+</table>
+
+<h2>Cursor API</h2>
+<p>
+  Cursors are forward-only and read-only. <code>next()</code> returns the next bean, or
+  <code>null</code> when the result set is exhausted — and automatically closes the cursor.
+  Call <code>close()</code> explicitly (e.g. in a <code>finally</code> block) if you stop
+  iterating early, to avoid resource leaks.
+</p>
+
+<h4>next() loop</h4>
+<pre><code>GalleryCursor c = db.selectGallery("WHERE state = 'CA' ORDER BY added");
+try {
+    Gallery g;
+    while ((g = c.next()) != null) {
+        // process g
+    }
+} finally {
+    c.close();
+}</code></pre>
+
+<h4>getAll()</h4>
+<pre><code>Gallery[] all = db.selectGallery(null).getAll();</code></pre>
+
+<h4>count()</h4>
+<pre><code>int n = GalleryCursor.count("WHERE poster = 'alice'");</code></pre>
+
+<h2>JSON / Bean Interoperability</h2>
+<p>
+  Every bean has two constructors and an <code>asJson()</code> method:
+</p>
+<pre><code>// PK constructor — non-PK fields start null
+Gallery g = new Gallery("gal-001");
+g.setPoster("alice");
+g.setState("CA");
+
+// JSONObject constructor — only the PK field is required in the JSON
+Gallery g2 = new Gallery(someJsonObject);
+
+// Serialise to JSON — all fields included; Java null becomes JSONObject.NULL
+JSONObject json = g.asJson();</code></pre>
+<p>
+  On input, non-PK fields absent from the JSON remain <code>null</code>. A field
+  present but set to <code>JSONObject.NULL</code> is also treated as <code>null</code>.
+</p>
+
+<h2>Ad-hoc Queries</h2>
+<pre><code>// prepare / execute / recycle cycle
+PreparedStatement ps = db.prepare("SELECT COUNT(*) FROM Gallery WHERE poster = ?");
+ps.setString(1, "alice");
+db.execute(ps);
+db.recycle(ps);   // returns statement to cache for future reuse
+
+// scalar convenience
+long total = db.getValue("SELECT COUNT(*) FROM Gallery");</code></pre>
+
+<h2>Backup and Restore</h2>
+<p>
+  <code>backup(path)</code> writes one JSON-lines file per type (e.g.
+  <code>Gallery.json</code>) to the given directory. Each line is the JSON serialisation
+  of one row. <code>restore(path)</code> drops and recreates all tables, then reloads
+  from those files. Both operations run one thread per type in parallel.
+</p>
+<pre><code>db.backup("/var/backups/crawlerif");
+// later ...
+db.restore("/var/backups/crawlerif");</code></pre>
+
+</body>
+</html>

@@ -1,0 +1,48 @@
+<root>
+
+    <db  name="CrawlerIf"  basePkg="com.gerken.db"  mavenGroupId="org.gerken" mavenArtefact="crawler-if-db">
+
+        <type  name="Poster">
+			<desc>The owner and producer of one or more galleries</desc>
+            <field  name="name"  type="String"  primary="true"  >The poster's user id</field>
+            <field  name="url"   type="String"  primary="false" >The url to the primary page of the poster's galleries.</field>
+            <field  name="color" type="String"  primary="false" indexable="true" >W (whitelisted), B (blacklisted) or G (no decision yet, default) indicating crawl priorities for newly posted galleries.</field> 
+        </type>
+
+        <type  name="Gallery">
+			<desc>A collection of images posted by a user and linked to by some number of gallery pages</desc>
+            <field  name="id"      		type="String"  primary="true"  >The gallery id</field>
+            <field  name="poster"  		type="String"  primary="false" indexable="true" >The poster's user name</field>
+            <field  name="name"    		type="String"  primary="false" >The gallery name</field>
+            <field  name="url"     		type="String"  primary="false" >The url of the gallery page</field>
+            <field  name="attrs"		type="String"  primary="false" >|-separated list of gallery categories and tags</field>
+            <field  name="images"  		type="Integer" primary="false" >Number of images in the gallerys</field>
+            <field  name="pages"  		type="Integer" primary="false" >Number of pages in the gallery</field>
+            <field  name="pagesSeen"  	type="Integer" primary="false" >Number of gallery pages that have been processed</field>
+            <field  name="quality" 		type="String"  primary="false" indexable="true" >Image size. One of S, M, L, XL</field>
+            <field  name="added"   		type="String"  primary="false" indexable="true" >When this gallery was added to the site (or modified) in yyyy-mm-dd format</field>
+            <field  name="state"   		type="String"  primary="false" indexable="true" >Process state for crawl. One of ID(entified as new from gallery page results list), CA(tegorized after crawling its first gallery page (0)), NA(vigating through all of its gallery pages), IN(ventoried after completing crawl of all gallery pages) </field>
+        </type>
+
+        <type  name="Image">
+			<desc>An image in a gallery</desc>
+            <field  name="pageId" 		type="String"  primary="true" indexable="true" >The image page id</field>
+            <field  name="galleryId" 	type="String"  primary="false" indexable="true" >The gallery id</field>
+            <field  name="pageUrl"  	type="String"  primary="false" indexable="true" >The url of the image page</field>
+            <field  name="imageId"      type="String"  primary="false"  >The image id. Should be the same as the id of the image page that displays the image</field>
+            <field  name="imageUrl"  	type="String"  primary="false" indexable="true" >The url of the image</field>
+            <field  name="filename"     type="String"  primary="false" >The local file name (not the absolute path) of the image</field>
+            <field  name="score"   		type="Integer" primary="false" indexable="true" >A user-provided ranking of the image. unscored: -1; poor:0; ok: 1; good:2</field>
+            <field  name="state"   		type="String"  primary="false" indexable="true" >Process state for crawl. One of GP (image discovered on gallery page), IP (information gathered from image page), DL (image downloaded)</field>
+        </type>
+
+        <type  name="GalleryAttr">
+			<desc>A string indicating the subject matter or context of the images in a gallery. It can be used to automatically prioritize crawl navigation</desc>
+            <field  name="name"      	type="String"  primary="true"  >The attribute itself.</field>
+            <field  name="good"   		type="Boolean" primary="false" indexable="true" >Whether there is a bias in favor of galleries with this attribute</field>
+            <field  name="bad"   		type="Boolean" primary="false" indexable="true" >Whether there is a bias against galleries with this attribute</field>
+        </type>
+
+    </db>
+
+</root>

@@ -1,0 +1,543 @@
+HSQLDB PERSISTENCE LAYER — GENERATION SPECIFICATION
+=====================================================
+
+PURPOSE
+-------
+Given a model XML file, generate a complete Java Maven artifact implementing a persistence
+layer backed by HSQLDB (embedded relational database) and org.codehaus.jettison for JSON.
+
+
+MODEL XML SCHEMA
+----------------
+Root element may be <dbs> or any wrapper element (e.g. <root>). Locate the <db> child.
+
+  <db name="NAME" basePkg="com.example.pkg" mavenGroupId="org.foo" mavenArtefact="my-db">
+    <type name="TypeName">
+      <desc>Optional human-readable description of this type.</desc>
+      <field name="fieldName" type="String|Integer|Long|Boolean|Double"
+             primary="true|false" indexable="true|false">Optional field description.</field>
+      <index name="idxName">          <!-- composite index; optional -->
+        <fieldRef name="fieldName" />
+      </index>
+    </type>
+  </db>
+
+Defaults if attribute omitted: primary=false, indexable=false.
+
+DUPLICATE FIELDS: If the same field name appears more than once in a <type>, then
+stop this task and raise the issue. Let the user decide the corrective action to take.
+The most common resolution is to keep the last occurrence (which typically carries the
+description) and discard the earlier duplicate. Do not resolve duplicates silently.
+
+PACKAGE NAMING CAVEAT: Java reserved words (if, for, while, etc.) cannot appear as
+package-name segments. If any Java or SQL token, whether specified explicitly in the
+model or derived from the naming conventions in this document, is a reserved word in
+Java or SQL then stop this task and report the naming issue.
+
+MULTIPLE ERRORS: When an error, such as the above, is found in the model, continue
+to validate the model for other errors before stopping. Report all errors found.
+
+OVERRIDE NOTES: A companion file (e.g. generate.txt) may accompany a generation run
+to record changes that have been made to the model or to instruct the generator to
+treat certain fields differently from what the model.xml currently shows (e.g. a field
+type has been changed but model.xml has not yet been updated). Apply those overrides
+when generating, then update model.xml to match before or after generation so the two
+files stay in sync.
+
+
+MAVEN POM
+---------
+groupId    = <db mavenGroupId>
+artifactId = <db mavenArtefact>
+version    = 1.0-SNAPSHOT
+Java source/target = 11
+
+Required dependencies:
+  org.hsqldb:hsqldb:2.7.3
+  org.codehaus.jettison:jettison:1.5.4
+
+
+GENERATED PACKAGES (relative to basePkg)
+-----------------------------------------
+  <basePkg>.bean    — one cargo bean per <type>
+  <basePkg>.cursor  — one cursor class per <type>
+  <basePkg>.persist — one PersistNAME class for the <db>
+
+
+COLUMN ORDERING RULE (critical for consistency)
+------------------------------------------------
+Within a single type, always process columns in the same order they appear in the <type>
+element: PK fields first (in declaration order), then non-PK fields (in declaration order).
+This order must be identical in:
+  • CREATE TABLE column list
+  • SELECT column list (in cursor select() and in persist's getTypeName SELECT)
+  • INSERT column list and VALUES placeholders
+  • MERGE USING (VALUES ...) AS t(...) column list
+  • bind helper parameter index assignments (1-based, left to right)
+  • fromRs/next() column reads
+
+
+FIELD-TYPE MAPPINGS
+--------------------
+  model type  │ Java type │ SQL type      │ PreparedStatement setter     │ ResultSet getter
+  ────────────┼───────────┼───────────────┼─────────────────────────────┼──────────────────
+  String      │ String    │ VARCHAR(32672)│ setString(idx, val)          │ getString
+  Integer     │ Integer   │ INTEGER       │ setInt   / setNull(INTEGER)  │ getInt + wasNull()
+  Long        │ Long      │ BIGINT        │ setLong  / setNull(BIGINT)   │ getLong + wasNull()
+  Boolean     │ Boolean   │ BOOLEAN       │ setBoolean/setNull(BOOLEAN)  │ getBoolean+wasNull()
+  Double      │ Double    │ DOUBLE        │ setDouble / setNull(DOUBLE)  │ getDouble+wasNull()
+
+String fields: ps.setString(idx, value) handles null correctly in HSQLDB (stores SQL NULL);
+no special null helper is needed for String.
+
+For nullable non-String types always use a null-safe helper and wasNull() on read:
+  private static void setIntOrNull(PreparedStatement ps, int idx, Integer v) throws SQLException {
+      if (v == null) ps.setNull(idx, Types.INTEGER); else ps.setInt(idx, v);
+  }
+  // Analogues for Long, Boolean, Double follow the same pattern.
+
+  // On read — wasNull() MUST be called immediately after getInt/getLong/getBoolean/etc.,
+  // before any other ResultSet method, or the result is unreliable:
+  int raw = rs.getInt("colName"); bean.setField(rs.wasNull() ? null : raw);
+  boolean rawB = rs.getBoolean("flag"); bean.setFlag(rs.wasNull() ? null : rawB);
+
+HSQLDB normalises unquoted identifiers to UPPERCASE internally, but JDBC ResultSet
+column-name lookups are case-insensitive, so rs.getString("pagesSeen") works even though
+the column is stored as PAGESSEEN.
+
+
+═══════════════════════════════════════════════════════════════════════
+CARGO BEAN  (<basePkg>.bean.TypeName)
+═══════════════════════════════════════════════════════════════════════
+
+Class name: type name with first character upper-cased (usually already is).
+
+Fields:
+  • Primary-key fields: private final <JavaType> fieldName;
+  • Non-PK fields:      private <JavaType> fieldName;
+
+Constructor(s):
+  • public TypeName(pk1Type pk1, pk2Type pk2, ...)  — sets PK fields only
+  • public TypeName(JSONObject json) throws JSONException
+      - Must call json.getString/getInt/getBoolean/etc. for each PK field (required; throw if absent)
+      - For non-PK fields use:  if (json.has("f") && !json.isNull("f")) this.f = json.getX("f");
+      - Ignore unrecognised JSON keys silently
+
+Accessors:
+  • Getters for ALL fields (PK and non-PK)
+  • Setters ONLY for non-PK fields
+
+equals() / hashCode(): use all PK fields via Objects.equals / Objects.hash
+
+toString(): "TypeName[field1=val1, field2=val2, ...]"  — list all fields in declaration order
+
+asJson() throws JSONException:
+  • Put every field; use JSONObject.NULL for Java null values
+  • For PK String fields (never null): json.put("name", name)
+  • For all nullable fields (String or non-String) the pattern is:
+      json.put("images", images == null ? JSONObject.NULL : images);
+      json.put("url",    url    == null ? JSONObject.NULL : url);
+    (JSONObject.put(String, Object) accepts boxed types; JSONObject.NULL avoids NullPointerException)
+  • Key names must exactly match the model field names (preserve camelCase)
+
+
+═══════════════════════════════════════════════════════════════════════
+CURSOR CLASS  (<basePkg>.cursor.TypeNameCursor)
+═══════════════════════════════════════════════════════════════════════
+
+Holds: private final PreparedStatement ps; private final ResultSet rs;
+Private constructor: CursorClass(PreparedStatement ps, ResultSet rs)
+
+The cursor class is in a different package from PersistNAME and cannot access its private
+static fromRs helpers. The bean-reading logic must therefore be inlined directly in next().
+
+static TypeNameCursor select(String clauses) throws SQLException
+  conn = PersistNAME.getConnection();
+  sql  = "SELECT col1, col2, ... FROM TypeName";   // list all columns explicitly; no SELECT *
+  if (clauses != null && !clauses.isBlank()) sql += " " + clauses;
+  PreparedStatement ps = conn.prepareStatement(sql);
+  return new TypeNameCursor(ps, ps.executeQuery());
+
+static int count(String clauses) throws SQLException
+  conn = PersistNAME.getConnection();
+  sql  = "SELECT COUNT(*) FROM TypeName";
+  // Guard against null clauses before calling replaceAll:
+  String filtered = clauses == null ? "" :
+      clauses.replaceAll("(?i)\\s*ORDER\\s+BY\\s+[^;]*", "").trim();
+  if (!filtered.isBlank()) sql += " " + filtered;
+  Use try-with-resources for both ps and rs.
+  // COUNT(*) always returns one row but always call rs.next() first:
+  return rs.next() ? rs.getInt(1) : 0;
+
+TypeName next() throws SQLException
+  if (!rs.next()) { close(); return null; }
+  // Inline bean-reading logic (mirrors persist's fromRs, but cursor can't call it):
+  Build bean from ResultSet columns using the same wasNull() pattern for non-String types.
+  Return bean.
+
+TypeName[] getAll() throws SQLException
+  Accumulate next() calls into a List; return toArray. (close() is called automatically.)
+
+void close()
+  try { rs.close(); } catch (Exception ignored) {}
+  try { ps.close(); } catch (Exception ignored) {}
+
+
+═══════════════════════════════════════════════════════════════════════
+PERSIST CLASS  (<basePkg>.persist.PersistNAME)
+  where NAME = <db name> with first character upper-cased
+═══════════════════════════════════════════════════════════════════════
+
+─── Static connection-management fields ───
+  private static final Map<String, Connection>    connectionMap = new ConcurrentHashMap<>();
+  private static final Map<String, AtomicInteger> refCountMap   = new ConcurrentHashMap<>();
+  private static volatile Connection activeConnection;   // used by cursor static methods
+
+─── Instance fields ───
+  private final String     path;
+  private final Connection conn;
+  // One PreparedStatement field per cached operation per type, e.g.:
+  //   private PreparedStatement psFooInsert, psFooUpsert, psFooDelete, psFooGet;
+  // Client-statement cache:
+  private final Map<String, PreparedStatement> clientCache  = new ConcurrentHashMap<>();
+  private final Map<PreparedStatement, String> clientSqlMap =
+      Collections.synchronizedMap(new IdentityHashMap<>());
+
+─── private constructor ───
+  Private: PersistNAME(String path, Connection conn). Only open() creates instances.
+
+─── static open(String dbPath) throws SQLException ───
+  Synchronised. Check connectionMap for existing open connection to dbPath.
+  If absent or closed:
+      conn = DriverManager.getConnection(
+          "jdbc:hsqldb:file:" + dbPath + "/db;shutdown=false", "SA", "");
+      put into connectionMap; put new AtomicInteger(0) into refCountMap;
+  Increment refCountMap.get(dbPath).
+  Set activeConnection = conn.
+  Return new PersistNAME(dbPath, conn) after calling createAllTablesAndIndexes().
+
+─── static Connection getConnection() ───
+  Returns activeConnection (throw IllegalStateException if null).
+  Called by cursor static methods.
+
+─── void close() throws SQLException ───
+  Synchronised.
+  Close all cached PreparedStatements (set fields to null) using a private nullPs() helper:
+    private static PreparedStatement nullPs(PreparedStatement ps) {
+        if (ps != null) { try { ps.close(); } catch (Exception ignored) {} }
+        return null;
+    }
+  Close clientCache entries; clear both clientCache and clientSqlMap.
+  Decrement refCountMap.get(path). If reaches 0:
+      Remove from connectionMap and refCountMap; close the Connection.
+      Null activeConnection if it equals conn.
+
+─── PreparedStatement helper pattern (lazy initialisation) ───
+  private PreparedStatement fooInsertStmt() throws SQLException {
+      if (psFooInsert == null || psFooInsert.isClosed())
+          psFooInsert = conn.prepareStatement("INSERT INTO Foo ...");
+      return psFooInsert;
+  }
+  // Same pattern for upsert, delete, get.
+
+─── dropTypeName() ───
+  MUST close and null all cached PreparedStatements for that type BEFORE executing
+  "DROP TABLE IF EXISTS TypeName". Use nullPs() for each. Otherwise HSQLDB may throw
+  because the statements still reference the dropped table.
+
+─── createTypeName() throws SQLException ───
+  try (Statement s = conn.createStatement()) {
+      // Only PK columns carry NOT NULL; non-PK columns are nullable by default.
+      s.execute("CREATE TABLE IF NOT EXISTS TypeName (" +
+                "pk1Col TYPE NOT NULL, " +
+                "nonPkCol TYPE, " +          // no NOT NULL
+                "PRIMARY KEY (pk1Col))");
+      // one statement per indexable NON-PK field only:
+      s.execute("CREATE INDEX IF NOT EXISTS idx_TypeName_fieldName ON TypeName (fieldName)");
+      // NOTE: if a PK field is marked indexable="true", do NOT create a separate index —
+      // the PRIMARY KEY constraint already provides an index.
+      // one statement per explicit <index> element (composite index):
+      s.execute("CREATE INDEX IF NOT EXISTS idx_TypeName_idxName ON TypeName (f1, f2)");
+  }
+
+─── UPSERT SQL (HSQLDB MERGE syntax) ───
+  MERGE INTO TypeName
+    USING (VALUES (?, ?, ...)) AS t(col1, col2, ...)   -- ALL columns, same order as bind
+    ON TypeName.pk1 = t.pk1 [AND TypeName.pk2 = t.pk2 ...]
+    WHEN MATCHED THEN UPDATE SET nonPkCol1 = t.nonPkCol1, nonPkCol2 = t.nonPkCol2, ...
+    WHEN NOT MATCHED THEN INSERT (col1, col2, ...) VALUES (t.col1, t.col2, ...)
+
+─── Bind / fromRs helpers ───
+  private static void bindTypeName(PreparedStatement ps, TypeName r) throws SQLException { ... }
+  private static TypeName typeNameFromRs(ResultSet rs) throws SQLException { ... }
+  These are PRIVATE STATIC in PersistNAME; cursor classes cannot access them.
+  Both are accessible from lambda bodies defined inside PersistNAME (e.g. backup threads).
+
+─── CRUD method signatures for each <type> ───
+
+  void createTypeName() throws SQLException
+  void dropTypeName()   throws SQLException
+
+  TypeNameCursor selectTypeName(String clauses) throws SQLException
+    → simple delegation: return TypeNameCursor.select(clauses);
+    (The cursor calls PersistNAME.getConnection() to get activeConnection.)
+
+  int    insert(TypeName row)                           throws SQLException  ← executeUpdate
+  int[]  insert(TypeName[] rows)                        throws SQLException
+  int[]  insert(TypeName[] rows, int offset, int len)   throws SQLException  ← core batch
+  int    delete(TypeName row)                           throws SQLException
+  int[]  delete(TypeName[] rows)                        throws SQLException
+  int[]  delete(TypeName[] rows, int offset, int len)   throws SQLException  ← core batch
+  int    deleteTypeName(pk1Type pk1, pk2Type pk2, ...)  throws SQLException  ← delete by key
+  int    upsert(TypeName row)                           throws SQLException  ← executeUpdate
+  int[]  upsert(TypeName[] rows)                        throws SQLException
+  int[]  upsert(TypeName[] rows, int offset, int len)   throws SQLException  ← core batch
+  TypeName getTypeName(pk1Type pk1, pk2Type pk2, ...)   throws SQLException  ← null if not found
+
+  deleteTypeName parameter names come from the PK field names in the model.
+  E.g. if PK field is named "name": deleteTypeName(String name)
+       if PK field is named "id":   deleteTypeName(String id)
+
+Single-row insert and upsert use ps.executeUpdate() directly — they do NOT delegate to the
+batch variant. Only the array-only variants delegate to the offset+len core:
+  public int[] insert(TypeName[] rows) throws SQLException { return insert(rows, 0, rows.length); }
+
+Batch implementation pattern:
+  PreparedStatement ps = typeNameInsertStmt();  // lazy getter
+  for (int i = offset; i < offset + len; i++) { bindTypeName(ps, rows[i]); ps.addBatch(); }
+  return ps.executeBatch();
+
+delete(TypeName row) delegates to deleteTypeName(row.getPk1(), ...):
+  public int delete(TypeName row) throws SQLException { return deleteTypeName(row.getPk1()); }
+
+delete(TypeName[] rows, int offset, int len) binds and batches the PK directly:
+  PreparedStatement ps = typeNameDeleteStmt();
+  for (int i = offset; i < offset + len; i++) { ps.setString(1, rows[i].getPk()); ps.addBatch(); }
+  return ps.executeBatch();
+
+getTypeName executes the select-by-PK PreparedStatement and uses try-with-resources on
+the ResultSet (the PreparedStatement itself stays cached):
+  ps.setString(1, pk1); try (ResultSet rs = ps.executeQuery()) { return rs.next() ? fromRs(rs) : null; }
+
+─── Client PreparedStatement helpers ───
+
+  PreparedStatement prepare(String sql) throws SQLException
+    Use clientCache.remove(sql) — not get() — to atomically take the entry out of the cache.
+    If the removed statement is non-null and not closed, register it in clientSqlMap and return it.
+    Otherwise: ps = conn.prepareStatement(sql); register in clientSqlMap; return ps.
+
+  void execute(PreparedStatement ps) throws SQLException  → ps.execute()
+
+  void recycle(PreparedStatement ps)
+    Look up sql via clientSqlMap.remove(ps).
+    If found and ps not closed: ps.clearParameters(); clientCache.put(sql, ps).
+    Use a private isPsClosed() helper to avoid checked exception from isClosed():
+      private static boolean isPsClosed(PreparedStatement ps) {
+          try { return ps.isClosed(); } catch (SQLException e) { return true; }
+      }
+
+  long getValue(String sql) throws SQLException
+    try (Statement s = conn.createStatement(); ResultSet rs = s.executeQuery(sql))
+    return rs.next() ? rs.getLong(1) : 0L;
+
+─── backup(String backupPath) throws Exception ───
+  Files.createDirectories(Paths.get(backupPath));
+  Fixed thread pool size = number of types in the model (one thread per type).
+  Each thread: opens its own Connection via newConn() so threads don't share a Connection;
+               queries "SELECT col1, col2, ... FROM TypeName" (explicit column list);
+               for each row calls the private static typeNameFromRs(rs) helper
+               (accessible from lambda since it is defined inside PersistNAME);
+               writes bean.asJson().toString() as one line to TypeName.json in backupPath.
+
+  Lambda pattern — use Callable<Void> so checked exceptions propagate through Future.get():
+    futures.add(executor.submit((Callable<Void>) () -> {
+        try (Connection c = newConn();
+             Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SELECT ... FROM TypeName")) {
+            try (BufferedWriter w = Files.newBufferedWriter(Paths.get(backupPath, "TypeName.json"))) {
+                while (rs.next()) { w.write(typeNameFromRs(rs).asJson().toString()); w.newLine(); }
+            }
+        }
+        return null;
+    }));
+
+  Call executor.shutdown() after all submissions, then call f.get() in a loop:
+    executor.shutdown();
+    for (Future<?> f : futures) f.get();
+
+  newConn() is a private instance method (uses this.path):
+    private Connection newConn() throws SQLException {
+        return DriverManager.getConnection(
+            "jdbc:hsqldb:file:" + path + "/db;shutdown=false", "SA", "");
+    }
+
+─── restore(String backupPath) throws Exception ───
+  Drop and recreate all tables (in a safe order if FKs exist; otherwise any order).
+  Use the same (Callable<Void>) lambda pattern as backup.
+  Each thread: reads TypeName.json via readJsonLines helper;
+               builds bean array from JSONObject list (bean's JSONObject constructor);
+               calls upsert(array) on the shared PersistNAME instance only if array non-empty.
+               (Guard: if (beans.length > 0) upsert(beans);)
+               Concurrent upserts to different tables are safe in HSQLDB.
+  Call executor.shutdown() then f.get() loop to propagate exceptions.
+
+  readJsonLines helper:
+    Path file = Paths.get(backupPath, typeName + ".json");
+    if (!Files.exists(file)) return emptyList;
+    BufferedReader → readLine loop → line.trim() → skip blank → new JSONObject(line).
+
+
+═══════════════════════════════════════════════════════════════════════
+CLEANUP ON REGENERATION
+═══════════════════════════════════════════════════════════════════════
+
+This is a full-regeneration spec. When regenerating from a new model:
+
+1. Read generated-inventory.txt to see the files produced by the previous generation.
+2. Compare type names in the new model.xml against those in generated-inventory.txt.
+3. Delete the bean, cursor, and (sections within the) persist class for any type no
+   longer present in the new model.
+4. After generation completes, overwrite generated-inventory.txt with the new file list.
+5. Run mvn install to verify the build.
+
+generated-inventory.txt holds filenames only — no field or schema details. It exists
+solely to enable this cleanup step. Keep it current after every generation run.
+
+
+═══════════════════════════════════════════════════════════════════════
+IMPLEMENTATION CHECKLIST
+═══════════════════════════════════════════════════════════════════════
+
+□ Package name: check all basePkg segments against Java reserved words; adjust if needed.
+□ Duplicate fields in model XML: stop and report; do not resolve silently.
+□ Override notes (e.g. generate.txt): apply instructed field-type changes and update model.xml.
+□ Column order: identical across CREATE TABLE, SELECT, INSERT, MERGE, bind, fromRs, next().
+□ PK fields: final, no setter, constructor-only, used in equals/hashCode.
+□ JSON constructor: only PK fields required; non-PK fields conditional on has()+isNull().
+□ asJson(): all fields present, null → JSONObject.NULL for both String and non-String nullables;
+  key names match model exactly (preserve camelCase).
+□ String bind: ps.setString(idx, value) handles null without a helper.
+□ Null-safe bind helpers for all non-String types (setIntOrNull, setBoolOrNull, etc.).
+□ wasNull() called immediately after getInt/getLong/getBoolean/etc. — before any other RS call.
+□ Cursor select(): explicit column list (no SELECT *); null-safe clauses check with isBlank().
+□ Cursor count(): guard null clauses before replaceAll; strip ORDER BY; rs.next() before getInt(1).
+□ Cursor next(): inline fromRs logic (cannot access private static methods of PersistNAME).
+□ Cursor next(): auto-close on first null return.
+□ Cursor close(): silent catch on both rs.close() and ps.close().
+□ Lazy PS getters: check isClosed() as well as null.
+□ createTypeName(): NOT NULL only on PK columns; non-PK columns nullable by default.
+□ createTypeName(): CREATE INDEX only for indexable NON-PK fields; skip indexable PK fields.
+□ Index naming: idx_TypeName_fieldName (single), idx_TypeName_idxName (composite <index>).
+□ dropTypeName(): use nullPs() to null out all 4 cached PSes for that type before DROP TABLE.
+□ MERGE syntax: USING (VALUES ...) AS t(...) with ALL columns; ON uses only PK columns;
+  UPDATE sets only non-PK columns; INSERT lists all columns with VALUES(t.col, ...).
+□ Single-row insert/upsert: use executeUpdate(), not addBatch/executeBatch.
+□ Batch insert/upsert/delete: addBatch in loop, executeBatch at end.
+□ Array variants delegate to offset+len variants.
+□ deleteTypeName: parameter names derive from the PK field names in the model.
+□ selectTypeName: simple delegation return TypeNameCursor.select(clauses).
+□ prepare(): use clientCache.remove(sql) (not get) to atomically take entry from cache.
+□ recycle(): use isPsClosed() helper to avoid checked exception from isClosed().
+□ backup: (Callable<Void>) cast on each lambda; explicit column list in SELECT.
+□ backup: newConn() is a private instance method (not static); one thread per type.
+□ backup: thread pool size = number of types (not hardcoded).
+□ restore: drop+recreate all tables before launching threads; guard if (beans.length > 0).
+□ restore: (Callable<Void>) cast; executor.shutdown() before f.get() loop.
+□ close(): use nullPs() helper; clear clientCache and clientSqlMap; refcount gate.
+□ After generation: update generated-inventory.txt with new file list.
+□ After generation: run mvn install to verify BUILD SUCCESS.
+
+
+═══════════════════════════════════════════════════════════════════════
+GENERATE model.html — DEVELOPER API REFERENCE
+═══════════════════════════════════════════════════════════════════════
+
+After all source files have been generated, write model.html to the root of the project,
+overwriting any existing file. This is a developer-facing reference for consumers of the
+generated library — not internal implementation notes.
+
+Content requirements:
+
+  1. Introduction (one short paragraph plus dependency stanza)
+     State the database name, the single entry-point class (PersistNAME), and mention
+     that the library is backed by HSQLDB and that JSON serialisation uses Jettison.
+     Immediately follow the paragraph with the Maven dependency stanza in a
+     <pre><code> block (XML, with < and > escaped as &lt; and &gt;) so that consumers
+     can copy it directly into their pom.xml:
+       <dependency>
+           <groupId>...</groupId>
+           <artifactId>...</artifactId>
+           <version>1.0-SNAPSHOT</version>
+       </dependency>
+
+  2. Lifecycle
+     Show the open/close pattern with a concise code example. Note that open() is
+     ref-counted — multiple callers sharing the same path reuse one connection.
+
+  3. Data model
+     One section per type. For each type show:
+       • A short descriptive heading (type name) and description from <desc> if present.
+       • A table of fields: field name | Java type | PK | nullable | indexed | description.
+       • The corresponding bean class name and package.
+       • The corresponding cursor class name and package.
+
+  4. API reference — PersistNAME
+     One sub-section per type. List every public method signature with a one-line
+     description. Group as: create/drop | select (cursor) | insert | upsert |
+     delete | get. Also include the client PreparedStatement helpers (prepare,
+     execute, recycle, getValue) and backup/restore in a shared section.
+
+  5. Cursor API
+     Explain that cursors are forward-only, that next() returns null and auto-closes
+     at end of results, and show the three usage patterns: next() loop, getAll(),
+     count().
+
+  6. JSON / bean interoperability
+     Show the two bean constructors (pk-args and JSONObject) and asJson(). Note which
+     fields are required in the JSON input (PK only) and how null values are
+     represented (JSONObject.NULL on output; field simply absent is safe on input).
+
+  7. Ad-hoc queries
+     Show the prepare / execute / recycle cycle and the getValue convenience method.
+
+  8. Backup and restore
+     Describe the file-per-type JSON format and the parallel-thread strategy.
+
+Presentation rules:
+  • Use semantic HTML5 (no inline styles, no external resources — the file must render
+    correctly when opened directly from the filesystem without a server).
+  • A minimal embedded <style> block for readability is acceptable.
+  • Code examples must be in <pre><code> blocks.
+  • Method signatures in the API reference use Java syntax, not prose.
+  • Do not include implementation details (SQL, bind helpers, lazy-getter mechanics,
+    thread pool internals) — those are irrelevant to a library consumer.
+
+
+═══════════════════════════════════════════════════════════════════════
+FINAL STEP — EMIT UPDATED GENERATION SPEC
+═══════════════════════════════════════════════════════════════════════
+
+After all source files have been generated and verified, write an updated copy of this
+generation spec to a NEW file. Do NOT overwrite this file (hsqldb.txt).
+
+The output file must be a complete, self-contained replacement — not an appendix or diff.
+It must reproduce every section of this document in full, incorporating any additions,
+corrections, or clarifications that arose during generation. The goal is that the next
+time generation is run from the output file, zero additional think time is required to
+resolve ambiguities or edge cases that had to be worked out this time.
+
+Typical reasons to update a section:
+  • A rule was ambiguous and required interpretation — make the interpretation explicit.
+  • An edge case appeared (e.g. a field type combination, a naming collision, a SQL quirk)
+    that is not yet covered — add a rule or example covering it.
+  • A checklist item was found to be incomplete or ordered incorrectly — fix it.
+  • A pattern in the spec conflicted with actual HSQLDB or Java behaviour — correct it.
+
+Do NOT add model-specific content (actual type names, field names, package names from
+the model being generated). The output spec must remain model-agnostic so it can drive
+generation from any conforming model.xml.
+
+Name the output file with a numeric suffix incremented from this file, e.g. if this file
+is hsqldb1.txt the output is hsqldb2.txt; if this file is hsqldb2.txt the output is
+hsqldb3.txt; and so on. The user will replace the old file with the new one, or delete
+the old file, outside the scope of this generation run.

@@ -1,0 +1,138 @@
+This is an archived document. do not use.
+
+This document describes how to take a model and produce an API for a persistence layer of the modeled data base.
+Once the API is built out the the persistence layer can be implemented in java using HSQLDB (embedded relational 
+database) and the org.codehaus.jettison.json JSON library.  The implementation is to be built in a stand-alone maven 
+artifact with the maven artifact and group name as specified in the <db> element of the model. 
+
+The model has the structure below, with every element except for <dbs> being repeatable. 
+
+<dbs>
+    <db  name=""  basePkg=""  mavenGroupId="" mavenArtefact="">
+        <type  name="">
+            <field  name="" type="String|Integer|Long|Boolean|Double"  primary="true|false" indexable="true|false" />
+            <index  name="">
+                <fieldRef  name="" />
+            </index>
+        </type>
+    </db>
+</dbs>
+
+Note: The default primary and indexable values if not specified are both false.
+
+There are some common aspects to the methods on the classes in this package.
+
+1) There is the notion of a clauses parameter. This value is a string containing zero or more SQL statement
+   clauses (e.g. WHERE, ORDER BY, etc.) that can be appended to an SQL statement as appropriate (some clauses don't
+   make sense for some SQL statements), A blank value is used to indicate no clauses 
+
+2) CRUD methods (insert, upsert, delete, select) methods should make their data base calls with prepared statements and
+   cache thoschange statements, once prepared, for reuse. When the data base is shut down the compiled statements can be 
+   closed.
+   
+3) With model-driven development, it is always possible to get a name that results in an invalid SQL or Java name. If that
+   happens (e.g. a field named new or an SQL column named table), stop this task and present the problematic name. Let the user
+   change the model and restart the code creation.
+
+
+The persistence layer API's are for the most part implemented on a Java "persist" class, whose name is a concatenation
+of "Persist" and the name of the model, with first character of the model name upper-cased. There will be one such
+class (in java package <basePkg>.persist) for each <db> element and it has several model-wide methods:
+
+- static open() - opens the HSQLDB data base in a directory named as one of the arguments, creating it if it doesn't 
+			exist, and creates any tables and indexes that do not yet exist.  Multiple opens for the same path 
+			reuse the same database.
+            
+- close() - if multiple clients opened this data base, decrement the client count and finally close the data base
+            when the last client closes it
+            
+- backup() - for each table in the data base, write a text file to disk. Each row in the table is written on one line
+            in the file as a string representation of a JSON object. The backup() method should use multiple threads
+            to write type files in parallel
+            
+- restore() - recreates the tables and indexes, deleting all data and recovers the rows by reading and upserting the
+            data in the files written by backup(). Like the backup() method, the restore method should use multiple
+            threads to store data in different tables in parallel.  Ideally, the insert with an array argument should be 
+            used for additional performance benefits.
+             
+ 
+Each <type> element (in java package <basePkg>.bean) describes one table in the model. For this defined type we will implement a Java cargo bean, a Java 
+cursor class for iterating over a set of selected rows in the table and a number of CRUD methods on the java persist 
+class
+
+
+The cargo bean will be a java class whose name is the type name with first character upper-cased. 
+- It will have the appropriately typed getter and setter methods for each <field> element. Note that there will be 
+  no setter methods for each field named as part of the primary key. The only way to set primary key values is 
+  through the constructor which has one argument per primary key field.
+- There will be an implementation of boolean equals() and int hashcode() that use the values of all primary fields for
+  the type
+- There will be a toString() implementation that writes the constant name of the type followed by labeled values for 
+  each of the fields
+- There will be an asJson() method and a corresponding constructor that takes one such JSON object. The constructor
+  should require only the primary fields be present and ignore other JSON fields that don't appear in the cargo object.   
+
+   
+The java cursor class (in java package <basePkg>.cursor) has as its name the concatenation of the Java type class and "Cursor". This class acts like an
+Iterator with methods:
+
+- static select(clauses) - returns an instance of the class that implements a select of all of the columns in the
+                table as influenced by zero or more clauses.
+                
+- close() - closes the result set and any other constructs used by the select and frees any additional resources.
+                
+- next() returns the next instance of the Java type class in the result set or null if there are no more rows. The first
+                time a null is returned close() is automatically called.
+                
+- static count(clauses) - returns an integer number of rows that would be returned using select() and next(). Note that
+                some clauses make sense for select() but not for count() (e.g. order by)
+
+- getAll() - returns an array of all Java cargo objects tha would be returned by next(). Automatically calls close();
+
+
+The persist class will have convenience methods for executing SQL statements:
+
+1) There should be PreparedStatement prepare(String sqlStmt), execute(PreparedStatement) and recycle(PreparedStatement)
+   methods that support caching and execution of client-supplied prepared statements. 
+
+2) There should be a long getValue(String sqlStmt) that executes an sql statement that results in a scalar number, then
+   returns that number
+                
+
+For each <type> element there will be a number of CRUD methods implemented on the persist class:
+
+- create<type>() throws SQLException (e.g. createEmployee()) creates the table in the data base. This method should
+  also create any single-field indexes as requested by fields with indexable=true. Also create multi-field indexes
+  detailed in any <index> and <fieldref> elements nested in the <type> element.
+
+- drop<type>() throws SQLException drops the table from the data base
+
+- select<type>(String clauses) throws SQLException - returns a cursor as defined above
+
+- int insert(<type> row) throws SQLException - calls an insert to add values for all fields into the table as a new 
+                   row. Returns the SQL code resulting from the single insert
+
+- int[] insert(<type>[] row) throws SQLException - calls an insert to add values for all fields into the table as a new row
+                   for each element of the array. The returned array contains an SQL return code for each of the Java
+                   cargo beans 
+
+- int delete(<type> <type>) throws SQLException - calls a delete to delete the row corresponding to the given 
+				   java cargo bean. Returns the SQL code resulting from the single delete
+
+- int[] delete(<type>[] <type>) throws SQLException  - deletes the row corresponding to each of the cargo beans
+				   in each element of the array. The returned array contains an SQL return code for the delete for
+				   each of the Java cargo beans 
+
+- int delete<type>(key1, key2, ..., key n) throws SQLException - deletes the row whose primary key is specified in
+                   the method's arguments 
+
+- int upsert(<type> <type>) throws SQLException - like insert(<type> <type>) but with upsert
+
+- int[] upsert(<type>[] <type>) throws SQLException - like  insert(<type>[] row) but with upsert
+
+- <type> get<type>(key1, key2, ..., key ,) throws SQLException returns a cargo bean containing the values of the row
+                    whose keys match the specified primary key values, or null
+  
+- for the insert, delete and upsert methods that take an array (e.g. insert(<type>[])) there should also be a 
+                  corresponding method that takes an array, an offset and a length (e.g. 
+                  (insert(<type>[], int offset, int len)) to act on portions of an array

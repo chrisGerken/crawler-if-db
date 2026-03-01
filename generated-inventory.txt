@@ -1,0 +1,27 @@
+GENERATED FILE INVENTORY
+========================
+This file records the Java source files produced by the most recent code generation run.
+It exists solely to assist with cleanup during future regenerations: compare the type
+names listed here against the new model, then delete bean, cursor, and persist-class
+sections for any type no longer present.
+
+Do NOT commit design or field details here. This file lists filenames only.
+
+Bean classes (com.gerken.db.bean):
+  src/main/java/com/gerken/db/bean/Poster.java
+  src/main/java/com/gerken/db/bean/Gallery.java
+  src/main/java/com/gerken/db/bean/Image.java
+  src/main/java/com/gerken/db/bean/GalleryAttr.java
+
+Cursor classes (com.gerken.db.cursor):
+  src/main/java/com/gerken/db/cursor/PosterCursor.java
+  src/main/java/com/gerken/db/cursor/GalleryCursor.java
+  src/main/java/com/gerken/db/cursor/ImageCursor.java
+  src/main/java/com/gerken/db/cursor/GalleryAttrCursor.java
+
+Persist class (com.gerken.db.persist):
+  src/main/java/com/gerken/db/persist/PersistCrawlerIf.java
+
+Other generated files:
+  model.html   — developer API reference (overwrite each generation)
+  pom.xml      — Maven build (regenerate only if db coordinates change)

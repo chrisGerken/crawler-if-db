@@ -1,0 +1,10 @@
+Perform tasks in hsqldb.txt using the model in model.xml after noting the following:
+
+1) The model has not changed (I think), but the descriptions of many types and fields have changed. Update javadoc comments 
+   and documentation. Note that I will be asking you in a different session to generate logic in other components 
+   (maven artifacts) based on these comments (e.g. Use the methods in crawler-if-db to get a list of galleries that are in 
+   state "ID" and whose posters have been white listed"), so if you have a way to store these descriptions (in DESIGN.md or
+   some similar file) in a way optimized to help in those future sessions then please do.
+   
+2) Other than changes to the descriptions no logic changes are need. 
+
