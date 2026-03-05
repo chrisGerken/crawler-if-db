@@ -1160,11 +1160,10 @@ public class PersistCrawlerIf {
         try (Statement s = conn.createStatement()) {
             s.execute("CREATE TABLE IF NOT EXISTS GalleryAttr (" +
                       "name VARCHAR(32672) NOT NULL, " +
-                      "good BOOLEAN, " +
-                      "bad BOOLEAN, " +
+                      "score VARCHAR(32672), " +
+                      "factor INTEGER, " +
                       "PRIMARY KEY (name))");
-            s.execute("CREATE INDEX IF NOT EXISTS idx_GalleryAttr_good ON GalleryAttr (good)");
-            s.execute("CREATE INDEX IF NOT EXISTS idx_GalleryAttr_bad  ON GalleryAttr (bad)");
+            s.execute("CREATE INDEX IF NOT EXISTS idx_GalleryAttr_score ON GalleryAttr (score)");
         }
     }
 
@@ -1196,7 +1195,7 @@ public class PersistCrawlerIf {
     private PreparedStatement galleryAttrInsertStmt() throws SQLException {
         if (psGalleryAttrInsert == null || psGalleryAttrInsert.isClosed())
             psGalleryAttrInsert = conn.prepareStatement(
-                    "INSERT INTO GalleryAttr (name, good, bad) VALUES (?, ?, ?)");
+                    "INSERT INTO GalleryAttr (name, score, factor) VALUES (?, ?, ?)");
         return psGalleryAttrInsert;
     }
 
@@ -1209,10 +1208,10 @@ public class PersistCrawlerIf {
     private PreparedStatement galleryAttrUpsertStmt() throws SQLException {
         if (psGalleryAttrUpsert == null || psGalleryAttrUpsert.isClosed())
             psGalleryAttrUpsert = conn.prepareStatement(
-                    "MERGE INTO GalleryAttr USING (VALUES (?, ?, ?)) AS t(name, good, bad) " +
+                    "MERGE INTO GalleryAttr USING (VALUES (?, ?, ?)) AS t(name, score, factor) " +
                     "ON GalleryAttr.name = t.name " +
-                    "WHEN MATCHED THEN UPDATE SET good = t.good, bad = t.bad " +
-                    "WHEN NOT MATCHED THEN INSERT (name, good, bad) VALUES (t.name, t.good, t.bad)");
+                    "WHEN MATCHED THEN UPDATE SET score = t.score, factor = t.factor " +
+                    "WHEN NOT MATCHED THEN INSERT (name, score, factor) VALUES (t.name, t.score, t.factor)");
         return psGalleryAttrUpsert;
     }
 
@@ -1237,13 +1236,14 @@ public class PersistCrawlerIf {
     private PreparedStatement galleryAttrGetStmt() throws SQLException {
         if (psGalleryAttrGet == null || psGalleryAttrGet.isClosed())
             psGalleryAttrGet = conn.prepareStatement(
-                    "SELECT name, good, bad FROM GalleryAttr WHERE name = ?");
+                    "SELECT name, score, factor FROM GalleryAttr WHERE name = ?");
         return psGalleryAttrGet;
     }
 
     /**
      * Binds all fields of {@code r} to the given prepared statement in column order.
-     * Boolean fields use {@link #setBoolOrNull} to correctly handle {@code null} values.
+     * The Integer field {@code factor} uses {@link #setIntOrNull} to correctly handle
+     * {@code null} values.
      *
      * @param ps the prepared statement to bind into
      * @param r  the GalleryAttr whose fields should be bound
@@ -1251,13 +1251,14 @@ public class PersistCrawlerIf {
      */
     private static void bindGalleryAttr(PreparedStatement ps, GalleryAttr r) throws SQLException {
         ps.setString(1, r.getName());
-        setBoolOrNull(ps, 2, r.getGood());
-        setBoolOrNull(ps, 3, r.getBad());
+        ps.setString(2, r.getScore());
+        setIntOrNull(ps, 3, r.getFactor());
     }
 
     /**
      * Reads the current row of {@code rs} into a new {@link GalleryAttr}.
-     * Boolean columns are read with {@code wasNull()} to distinguish SQL NULL from FALSE.
+     * The Integer column {@code factor} is read with {@code wasNull()} to distinguish
+     * SQL NULL from zero.
      *
      * @param rs a result set positioned on the row to read
      * @return a populated GalleryAttr
@@ -1265,15 +1266,15 @@ public class PersistCrawlerIf {
      */
     private static GalleryAttr galleryAttrFromRs(ResultSet rs) throws SQLException {
         GalleryAttr r = new GalleryAttr(rs.getString("name"));
-        boolean good = rs.getBoolean("good"); r.setGood(rs.wasNull() ? null : good);
-        boolean bad  = rs.getBoolean("bad");  r.setBad(rs.wasNull()  ? null : bad);
+        r.setScore(rs.getString("score"));
+        int factor = rs.getInt("factor"); r.setFactor(rs.wasNull() ? null : factor);
         return r;
     }
 
     /**
      * Opens a forward-only cursor over GalleryAttr rows matching the given SQL clauses.
      *
-     * @param clauses optional SQL clauses to append (e.g. {@code "WHERE good = TRUE"}),
+     * @param clauses optional SQL clauses to append (e.g. {@code "WHERE score = '+'"}),
      *                or {@code null} to fetch all rows
      * @return a new {@link GalleryAttrCursor}
      * @throws SQLException if the query fails
@@ -1593,7 +1594,7 @@ public class PersistCrawlerIf {
         futures.add(executor.submit((Callable<Void>) () -> {
             try (Connection c = newConn();
                  Statement st = c.createStatement();
-                 ResultSet rs = st.executeQuery("SELECT name, good, bad FROM GalleryAttr")) {
+                 ResultSet rs = st.executeQuery("SELECT name, score, factor FROM GalleryAttr")) {
                 try (BufferedWriter w = Files.newBufferedWriter(Paths.get(backupPath, "GalleryAttr.json"))) {
                     while (rs.next()) { w.write(galleryAttrFromRs(rs).asJson().toString()); w.newLine(); }
                 }

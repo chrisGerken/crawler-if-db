@@ -113,8 +113,8 @@ try {
 <table>
   <tr><th>Field</th><th>Java type</th><th>PK</th><th>Nullable</th><th>Indexed</th><th>Description</th></tr>
   <tr><td>name</td><td>String</td><td>yes</td><td>no</td><td>yes (PK)</td><td>The attribute itself</td></tr>
-  <tr><td>good</td><td>Boolean</td><td>no</td><td>yes</td><td>yes</td><td>Whether there is a bias in favor of galleries with this attribute</td></tr>
-  <tr><td>bad</td><td>Boolean</td><td>no</td><td>yes</td><td>yes</td><td>Whether there is a bias against galleries with this attribute</td></tr>
+  <tr><td>score</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>Whether there is a bias in favor of galleries ("+"), a bias against ("-"), no bias (" ") with this attribute, or "?" if not yet scored</td></tr>
+  <tr><td>factor</td><td>Integer</td><td>no</td><td>yes</td><td>no</td><td>An additive that strengthens the score for this attribute relative to other attributes with the same score</td></tr>
 </table>
 
 <h2>API Reference — PersistCrawlerIf</h2>

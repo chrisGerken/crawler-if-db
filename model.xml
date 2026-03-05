@@ -21,7 +21,7 @@
             <field  name="pagesSeen"  	type="Integer" primary="false" >Number of gallery pages that have been processed</field>
             <field  name="quality" 		type="String"  primary="false" indexable="true" >Image size. One of S, M, L, XL</field>
             <field  name="added"   		type="String"  primary="false" indexable="true" >When this gallery was added to the site (or modified) in yyyy-mm-dd format</field>
-            <field  name="state"   		type="String"  primary="false" indexable="true" >Process state for crawl. One of ID(entified as new from gallery page results list), CA(tegorized after crawling its first gallery page (0)), NA(vigating through all of its gallery pages), IN(ventoried after completing crawl of all gallery pages) </field>
+            <field  name="state"   		type="String"  primary="false" indexable="true" >Process state for crawl. One of ID(entified as new from gallery page results list), CA(tegorized after crawling its first gallery page (0)), NA(vigating through all of its gallery pages), SA (sample images downloaded, pending approval for continued crawling), IN(ventoried after completing crawl of all gallery pages) or NI (no interest) </field>
         </type>
 
         <type  name="Image">
@@ -39,8 +39,8 @@
         <type  name="GalleryAttr">
 			<desc>A string indicating the subject matter or context of the images in a gallery. It can be used to automatically prioritize crawl navigation</desc>
             <field  name="name"      	type="String"  primary="true"  >The attribute itself.</field>
-            <field  name="good"   		type="Boolean" primary="false" indexable="true" >Whether there is a bias in favor of galleries with this attribute</field>
-            <field  name="bad"   		type="Boolean" primary="false" indexable="true" >Whether there is a bias against galleries with this attribute</field>
+            <field  name="score"   		type="String"  primary="false" indexable="true" >Whether there is a bias in favor of galleries ("+"), a bias against ("-"), no bias (" ") with this attribute, or "?" if not yet scored</field>
+            <field  name="factor"   	type="Integer" primary="false" >An additive to strength the score for this attribute</field>
         </type>
 
     </db>

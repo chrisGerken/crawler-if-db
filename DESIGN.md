@@ -89,11 +89,11 @@ An image in a gallery.
 ### GalleryAttr
 A string indicating the subject matter or context of the images in a gallery. Can be used to automatically prioritize crawl navigation.
 
-| Field | Java type | PK | Indexed  | Description |
-|-------|-----------|----|----------|-------------|
-| name  | String    | yes | yes (PK) | The attribute itself |
-| good  | Boolean   | no  | yes      | Whether there is a bias in favor of galleries with this attribute |
-| bad   | Boolean   | no  | yes      | Whether there is a bias against galleries with this attribute |
+| Field  | Java type | PK | Indexed  | Description |
+|--------|-----------|----|----------|-------------|
+| name   | String    | yes | yes (PK) | The attribute itself |
+| score  | String    | no  | yes      | Whether there is a bias in favor of galleries ("+"), a bias against ("-"), no bias (" ") with this attribute, or "?" if not yet scored |
+| factor | Integer   | no  | no       | An additive that strengthens the score for this attribute relative to other attributes with the same score |
 
 ---
 
@@ -174,8 +174,8 @@ private static void setBoolOrNull(PreparedStatement ps, int idx, Boolean v) thro
 On read, `wasNull()` must be called **immediately** after `getInt()`/`getBoolean()`/etc.,
 before any other ResultSet method:
 ```java
-int raw = rs.getInt("score"); bean.setScore(rs.wasNull() ? null : raw);
-boolean rawGood = rs.getBoolean("good"); bean.setGood(rs.wasNull() ? null : rawGood);
+int raw = rs.getInt("score");  bean.setScore(rs.wasNull() ? null : raw);
+int fac = rs.getInt("factor"); bean.setFactor(rs.wasNull() ? null : fac);
 ```
 
 ### Lazy PreparedStatement getters
@@ -245,8 +245,8 @@ return rs.next() ? rs.getInt(1) : 0;
 
 ### asJson() for nullable non-String fields
 ```java
-json.put("images", images == null ? JSONObject.NULL : images);
-json.put("good",   good   == null ? JSONObject.NULL : good);
+json.put("images",  images  == null ? JSONObject.NULL : images);
+json.put("factor",  factor  == null ? JSONObject.NULL : factor);
 ```
 `JSONObject.put(String, Object)` accepts boxed types; `JSONObject.NULL` avoids NPE.
 
@@ -273,5 +273,7 @@ return ps;
 - Each generation run emits an updated spec as a versioned file (e.g. hsqldb1.txt);
   the user swaps that in to replace hsqldb.txt externally.
 - **Gallery.state** and **Image.state** are both `String` (VARCHAR) — changed from
-  `Integer` in this generation run. Gallery states: ID, CA, NA, IN.
+  `Integer` in an earlier run. Gallery states: ID, CA, NA, IN.
   Image states: GP, IP, DL.
+- **GalleryAttr** fields updated (March 2026): old `good`/`bad` Boolean columns replaced by
+  `score` (String, indexed: "+"/"-"/"?"/" ") and `factor` (Integer).

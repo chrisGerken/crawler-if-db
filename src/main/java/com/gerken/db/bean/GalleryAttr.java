@@ -8,8 +8,9 @@ import org.codehaus.jettison.json.JSONObject;
  * A string indicating the subject matter or context of the images in a gallery.
  * It can be used to automatically prioritize crawl navigation.
  *
- * <p>Each attribute has optional {@code good} and {@code bad} flags that express a
- * bias for or against galleries bearing this attribute.</p>
+ * <p>Each attribute carries a {@code score} indicating crawl bias ("+", "-", " ",
+ * or "?" if not yet scored) and an optional {@code factor} that adjusts the strength
+ * of that score relative to other attributes with the same score.</p>
  *
  * <p>Instances are created either via the primary-key constructor or by deserialising
  * a {@link JSONObject} (e.g. from a backup file). The primary-key field {@code name}
@@ -20,11 +21,14 @@ public class GalleryAttr {
     /** The attribute keyword itself. Primary key; immutable. */
     private final String  name;
 
-    /** Whether there is a bias in favor of galleries with this attribute. */
-    private Boolean good;
+    /**
+     * The crawl bias for galleries with this attribute.
+     * One of "+" (bias in favor), "-" (bias against), " " (no bias), or "?" (not yet scored).
+     */
+    private String  score;
 
-    /** Whether there is a bias against galleries with this attribute. */
-    private Boolean bad;
+    /** An additive that strengthens the score for this attribute relative to others with the same score. */
+    private Integer factor;
 
     /**
      * Constructs a GalleryAttr with the given primary key.
@@ -46,8 +50,8 @@ public class GalleryAttr {
      */
     public GalleryAttr(JSONObject json) throws JSONException {
         this.name = json.getString("name");
-        if (json.has("good") && !json.isNull("good")) this.good = json.getBoolean("good");
-        if (json.has("bad")  && !json.isNull("bad"))  this.bad  = json.getBoolean("bad");
+        if (json.has("score")  && !json.isNull("score"))  this.score  = json.getString("score");
+        if (json.has("factor") && !json.isNull("factor")) this.factor = json.getInt("factor");
     }
 
     /**
@@ -55,35 +59,37 @@ public class GalleryAttr {
      *
      * @return the attribute name; never {@code null}
      */
-    public String  getName() { return name; }
+    public String  getName()   { return name; }
 
     /**
-     * Returns whether there is a bias in favor of galleries with this attribute.
+     * Returns the crawl bias score for this attribute.
+     * One of "+", "-", " ", or "?" (not yet scored), or {@code null} if unset.
      *
-     * @return {@code true} if there is a favorable bias, {@code false} if not, or {@code null} if unset
+     * @return the score string, or {@code null} if unset
      */
-    public Boolean getGood() { return good; }
+    public String  getScore()  { return score; }
 
     /**
-     * Returns whether there is a bias against galleries with this attribute.
+     * Returns the factor that adjusts this attribute's score strength relative to other
+     * attributes with the same score.
      *
-     * @return {@code true} if there is a negative bias, {@code false} if not, or {@code null} if unset
+     * @return the factor, or {@code null} if unset
      */
-    public Boolean getBad()  { return bad; }
+    public Integer getFactor() { return factor; }
 
     /**
-     * Sets whether there is a bias in favor of galleries with this attribute.
+     * Sets the crawl bias score for this attribute.
      *
-     * @param good {@code true} if there is a favorable bias, {@code false} if not, or {@code null} to clear
+     * @param score one of "+", "-", " ", "?", or {@code null} to clear
      */
-    public void setGood(Boolean good) { this.good = good; }
+    public void setScore(String score)   { this.score  = score; }
 
     /**
-     * Sets whether there is a bias against galleries with this attribute.
+     * Sets the factor that adjusts this attribute's score strength.
      *
-     * @param bad {@code true} if there is a negative bias, {@code false} if not, or {@code null} to clear
+     * @param factor the factor value, or {@code null} to clear
      */
-    public void setBad(Boolean bad)   { this.bad  = bad; }
+    public void setFactor(Integer factor) { this.factor = factor; }
 
     /**
      * Two GalleryAttr instances are equal when their {@code name} (primary key) is equal.
@@ -116,7 +122,7 @@ public class GalleryAttr {
      */
     @Override
     public String toString() {
-        return "GalleryAttr[name=" + name + ", good=" + good + ", bad=" + bad + "]";
+        return "GalleryAttr[name=" + name + ", score=" + score + ", factor=" + factor + "]";
     }
 
     /**
@@ -129,9 +135,9 @@ public class GalleryAttr {
      */
     public JSONObject asJson() throws JSONException {
         JSONObject json = new JSONObject();
-        json.put("name", name);
-        json.put("good", good == null ? JSONObject.NULL : good);
-        json.put("bad",  bad  == null ? JSONObject.NULL : bad);
+        json.put("name",   name);
+        json.put("score",  score  == null ? JSONObject.NULL : score);
+        json.put("factor", factor == null ? JSONObject.NULL : factor);
         return json;
     }
 }

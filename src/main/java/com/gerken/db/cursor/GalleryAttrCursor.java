@@ -40,19 +40,19 @@ public class GalleryAttrCursor {
     /**
      * Opens a cursor over all GalleryAttr rows that match the given SQL clauses.
      *
-     * <p>The cursor reads all columns ({@code name, good, bad}) from the
+     * <p>The cursor reads all columns ({@code name, score, factor}) from the
      * {@code GalleryAttr} table. The optional {@code clauses} string is appended
      * directly to the base SELECT; it may contain {@code WHERE}, {@code ORDER BY},
      * {@code LIMIT}, or any other trailing SQL fragment.</p>
      *
-     * @param clauses optional SQL clauses to append (e.g. {@code "WHERE good = TRUE"}),
+     * @param clauses optional SQL clauses to append (e.g. {@code "WHERE score = '+'"}),
      *                or {@code null} / blank to fetch all rows
      * @return an open cursor positioned before the first row
      * @throws SQLException if a database error occurs
      */
     public static GalleryAttrCursor select(String clauses) throws SQLException {
         Connection conn = PersistCrawlerIf.getConnection();
-        String sql = "SELECT name, good, bad FROM GalleryAttr";
+        String sql = "SELECT name, score, factor FROM GalleryAttr";
         if (clauses != null && !clauses.isBlank()) sql += " " + clauses;
         PreparedStatement ps = conn.prepareStatement(sql);
         return new GalleryAttrCursor(ps, ps.executeQuery());
@@ -84,8 +84,8 @@ public class GalleryAttrCursor {
     /**
      * Advances the cursor and returns the next {@link GalleryAttr}.
      *
-     * <p>Boolean columns ({@code good}, {@code bad}) are read with {@code wasNull()}
-     * to correctly distinguish SQL {@code NULL} from {@code FALSE}. When the result
+     * <p>The Integer column ({@code factor}) is read with {@code wasNull()}
+     * to correctly distinguish SQL {@code NULL} from zero. When the result
      * set is exhausted, {@link #close()} is called automatically and {@code null}
      * is returned.</p>
      *
@@ -98,8 +98,8 @@ public class GalleryAttrCursor {
             return null;
         }
         GalleryAttr bean = new GalleryAttr(rs.getString("name"));
-        boolean good = rs.getBoolean("good"); bean.setGood(rs.wasNull() ? null : good);
-        boolean bad  = rs.getBoolean("bad");  bean.setBad(rs.wasNull()  ? null : bad);
+        bean.setScore(rs.getString("score"));
+        int factor = rs.getInt("factor"); bean.setFactor(rs.wasNull() ? null : factor);
         return bean;
     }
 
