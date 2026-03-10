@@ -12,12 +12,14 @@ Bean classes (com.gerken.db.bean):
   src/main/java/com/gerken/db/bean/Gallery.java
   src/main/java/com/gerken/db/bean/Image.java
   src/main/java/com/gerken/db/bean/GalleryAttr.java
+  src/main/java/com/gerken/db/bean/Caption.java
 
 Cursor classes (com.gerken.db.cursor):
   src/main/java/com/gerken/db/cursor/PosterCursor.java
   src/main/java/com/gerken/db/cursor/GalleryCursor.java
   src/main/java/com/gerken/db/cursor/ImageCursor.java
   src/main/java/com/gerken/db/cursor/GalleryAttrCursor.java
+  src/main/java/com/gerken/db/cursor/CaptionCursor.java
 
 Persist class (com.gerken.db.persist):
   src/main/java/com/gerken/db/persist/PersistCrawlerIf.java

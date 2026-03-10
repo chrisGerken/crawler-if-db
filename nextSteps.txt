@@ -1,0 +1,9 @@
+1) Replace resumeTasks.txt with an empty file and as work progresses on the remaining tasks continue to update resumeTasks.txt with any information needed to resume these tasks in the situation where my usage hits a limit and is cut off.
+
+--------------------
+
+2) If any of these tasks require changes outside of the crawler-if-db project then call them out explicitly 
+
+
+   
+4) update any .md files in order to better recover the current session context in the next session

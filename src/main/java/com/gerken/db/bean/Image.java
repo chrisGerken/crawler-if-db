@@ -186,6 +186,26 @@ public class Image {
     public void setState(String state)         { this.state     = state; }
 
     /**
+     * Returns the original filename derived from {@link #getImageUrl()}.
+     *
+     * <p>Extracts the last path segment of the image URL, stripping any query string.
+     * For example, {@code https://cdn.example.com/images/1008780597.jfif?secure=abc}
+     * returns {@code "1008780597.jfif"}.</p>
+     *
+     * @return the filename portion of the image URL, {@code null} if {@code imageUrl} is
+     *         {@code null}, or a blank string if {@code imageUrl} is blank
+     */
+    public String getOriginalFilename() {
+        if (imageUrl == null) return null;
+        if (imageUrl.isBlank()) return imageUrl;
+        String url = imageUrl;
+        int q = url.indexOf('?');
+        if (q >= 0) url = url.substring(0, q);
+        int slash = url.lastIndexOf('/');
+        return slash >= 0 ? url.substring(slash + 1) : url;
+    }
+
+    /**
      * Two Image instances are equal when their {@code pageId} (primary key) is equal.
      *
      * @param o the object to compare
@@ -226,20 +246,24 @@ public class Image {
      * Serialises this Image to a JSON object.
      * Every field is included; Java {@code null} values are represented as
      * {@link JSONObject#NULL}.
+     * The derived field {@code originalFilename} is included for export convenience
+     * but is ignored on import.
      *
      * @return a JSONObject containing all fields
      * @throws JSONException if serialisation fails
      */
     public JSONObject asJson() throws JSONException {
         JSONObject json = new JSONObject();
-        json.put("pageId",    pageId);
-        json.put("galleryId", galleryId == null ? JSONObject.NULL : galleryId);
-        json.put("pageUrl",   pageUrl   == null ? JSONObject.NULL : pageUrl);
-        json.put("imageId",   imageId   == null ? JSONObject.NULL : imageId);
-        json.put("imageUrl",  imageUrl  == null ? JSONObject.NULL : imageUrl);
-        json.put("filename",  filename  == null ? JSONObject.NULL : filename);
-        json.put("score",     score     == null ? JSONObject.NULL : score);
-        json.put("state",     state     == null ? JSONObject.NULL : state);
+        json.put("pageId",           pageId);
+        json.put("galleryId",        galleryId == null ? JSONObject.NULL : galleryId);
+        json.put("pageUrl",          pageUrl   == null ? JSONObject.NULL : pageUrl);
+        json.put("imageId",          imageId   == null ? JSONObject.NULL : imageId);
+        json.put("imageUrl",         imageUrl  == null ? JSONObject.NULL : imageUrl);
+        json.put("filename",         filename  == null ? JSONObject.NULL : filename);
+        json.put("score",            score     == null ? JSONObject.NULL : score);
+        json.put("state",            state     == null ? JSONObject.NULL : state);
+        String orig = getOriginalFilename();
+        json.put("originalFilename", orig      == null ? JSONObject.NULL : orig);
         return json;
     }
 }

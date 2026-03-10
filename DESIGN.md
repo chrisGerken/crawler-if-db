@@ -95,6 +95,18 @@ A string indicating the subject matter or context of the images in a gallery. Ca
 | score  | String    | no  | yes      | Whether there is a bias in favor of galleries ("+"), a bias against ("-"), no bias (" ") with this attribute, or "?" if not yet scored |
 | factor | Integer   | no  | no       | An additive that strengthens the score for this attribute relative to other attributes with the same score |
 
+### Caption
+A caption to be associated with an image. An image may have multiple captions.
+
+| Field   | Java type | PK  | Indexed   | Description |
+|---------|-----------|-----|-----------|-------------|
+| id      | Long      | yes | yes (PK)  | The unique caption id (epoch ms at app startup, incremented for uniqueness) |
+| imageId | String    | no  | no        | The image id. May not be unique in this table |
+| caption | String    | no  | no        | The text of the caption |
+
+**ID generation**: `PersistCrawlerIf.nextCaptionId()` returns a unique `long` from a static
+`AtomicLong` initialised to `System.currentTimeMillis()` at class-load time.
+
 ---
 
 ## Generated class inventory
@@ -147,13 +159,47 @@ jdbc:hsqldb:file:<path>/db;shutdown=false
 
 `shutdown=false` is intentional — the connection is closed explicitly via `close()`.
 
+Immediately after opening the connection, `open()` executes three statements:
+
+```sql
+SET FILES CACHE ROWS 10000
+SET FILES CACHE SIZE 65536
+SET DATABASE DEFAULT TABLE TYPE CACHED
+```
+
+**`SET FILES CACHE ROWS/SIZE`** — correct HSQLDB 2.x syntax for bounding the in-memory
+file cache. `CACHE ROWS` caps the row count; `CACHE SIZE` caps the total size in kibibytes
+(65536 KiB = 64 MiB). **Do NOT use `SET DATABASE CACHE ROWS/SIZE`** — that syntax does not
+exist in HSQLDB 2.x and throws `SQLSyntaxErrorException: unexpected token: CACHE`.
+
+**`SET DATABASE DEFAULT TABLE TYPE CACHED`** — ensures any subsequently executed
+`CREATE TABLE` statement produces a disk-backed CACHED table rather than an in-memory
+MEMORY table. All five `createTypeName()` methods also use `CREATE CACHED TABLE IF NOT
+EXISTS` explicitly as a belt-and-suspenders guarantee.
+
+**Why CACHED tables matter:** HSQLDB's default table type is MEMORY, which keeps every row
+as a live Java object on the heap. With a large Image table (tens of thousands of rows or
+more) this can exhaust the entire JVM heap (4 GB OOM observed in production). CACHED tables
+are disk-backed; the file cache holds at most `CACHE ROWS` rows in memory at any time.
+
+After `createAllTablesAndIndexes()`, `open()` calls `migrateTablesToCached()` which runs
+`SET TABLE <name> TYPE CACHED` for each table to convert any pre-existing MEMORY tables in
+databases created before this fix. The conversion is wrapped in a per-table try/catch that
+silently swallows errors for tables that are already CACHED or do not yet exist.
+
 ### Backup / restore
 
-`backup(path)` and `restore(path)` each launch one thread per type via a fixed thread pool.
-Backup threads open their own connection via private `newConn()` (instance method using
-`this.path`) so threads do not share a `Connection`. Lambdas are cast to `(Callable<Void>)`
-so checked exceptions surface through `Future.get()`.
+`backup(path)` writes one thread per type via a fixed thread pool. Backup threads open their
+own connection via private `newConn()` so threads do not share a `Connection`. Lambdas are
+cast to `(Callable<Void>)` so checked exceptions surface through `Future.get()`.
 Ordering: submit all tasks → `executor.shutdown()` → `f.get()` loop.
+
+`restore(path)` runs **sequentially** (Poster → Gallery → Image → GalleryAttr → Caption) via
+a private `restoreTable(backupPath, typeName, LineProcessor)` helper. Each table is streamed
+line-by-line: read one line, parse one `JSONObject`, upsert the bean, discard — no
+`ArrayList<JSONObject>` accumulation. Running sequentially means only one table's worth of
+objects is live in the heap at a time. A private `logHeap(label)` helper logs heap usage
+before and after each table. `backup()` also calls `logHeap()` at start and end.
 
 ---
 
@@ -233,7 +279,15 @@ futures.add(executor.submit((Callable<Void>) () -> {
 executor.shutdown();
 for (Future<?> f : futures) f.get();
 ```
-Restore guards empty arrays before batch upsert: `if (beans.length > 0) upsert(beans);`
+
+### Restore streaming pattern
+`restore()` is sequential and streaming — no parallel executor, no full-load ArrayList.
+```java
+restoreTable(backupPath, "Poster", line -> upsert(new Poster(new JSONObject(line))));
+```
+`restoreTable()` opens a `BufferedReader`, reads one line at a time, and invokes a
+`LineProcessor` lambda per non-blank line. `logHeap(label)` is called before and after
+each table's load. Only one table's worth of live objects is on the heap at a time.
 
 ### Cursor count() null-safety
 ```java
@@ -277,3 +331,25 @@ return ps;
   Image states: GP, IP, DL.
 - **GalleryAttr** fields updated (March 2026): old `good`/`bad` Boolean columns replaced by
   `score` (String, indexed: "+"/"-"/"?"/" ") and `factor` (Integer).
+- **Caption** type added (March 2026): `id` (Long PK, generated via `nextCaptionId()`),
+  `imageId` (String), `caption` (String). No non-PK indexes. Thread pool size in
+  backup is now 5.
+- **Image.getOriginalFilename()** added (March 2026): derives the original filename from
+  `imageUrl` by stripping the query string and returning the last path segment.
+- **Image.asJson()** updated (March 2026): now includes `originalFilename` as a derived
+  export-only field. It is not read back during JSON import (constructor ignores it).
+- **restore() rewritten (March 2026)**: no longer parallel; streams line-by-line sequentially
+  per table via `restoreTable()` + `LineProcessor` to avoid loading entire tables into heap.
+- **ImageCursor now implements AutoCloseable (March 2026)**: `close()` already existed;
+  `implements AutoCloseable` added so callers can use try-with-resources.
+- **Heap monitoring added (March 2026)**: `logHeap(label)` helper logs heap usage before/after
+  each table in `restore()` and at start/end of `backup()`.
+- **HSQLDB CACHED tables + cache limits (March 2026)**: All tables are now created as
+  `CREATE CACHED TABLE IF NOT EXISTS` (disk-backed). `open()` executes `SET FILES CACHE ROWS
+  10000`, `SET FILES CACHE SIZE 65536`, and `SET DATABASE DEFAULT TABLE TYPE CACHED`
+  immediately after the connection is established. A new `migrateTablesToCached()` method
+  converts any pre-existing MEMORY tables (created before this fix) via `SET TABLE <name>
+  TYPE CACHED`. Root cause: HSQLDB's default MEMORY tables keep every row as a Java heap
+  object; a large Image table caused 4 GB OOM in production. Note: the correct syntax for
+  cache limits is `SET FILES CACHE ROWS/SIZE` — `SET DATABASE CACHE ROWS/SIZE` does not
+  exist and throws SQLSyntaxErrorException.

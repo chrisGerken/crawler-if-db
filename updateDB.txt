@@ -1,0 +1,14 @@
+I want to make a number of changes to the schema described by model.xml, including:
+
+ - text changes to model.xml itself
+ 
+ - changes to the actual HSQLDB data base in /Users/chrisgerken/crawl/if/db/persist such as altering tables 
+   and any other transformations as required
+   
+ - changes to the source code in this project as described in DESIGN.md
+ 
+ The specific changes are:
+ 
+ 1) A new possible value for state in Image: DE for deleted images that are no longer wanted.
+ 
+ 2) 

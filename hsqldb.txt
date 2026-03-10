@@ -211,10 +211,50 @@ PERSIST CLASS  (<basePkg>.persist.PersistNAME)
   If absent or closed:
       conn = DriverManager.getConnection(
           "jdbc:hsqldb:file:" + dbPath + "/db;shutdown=false", "SA", "");
+
+      Immediately after obtaining the connection, execute these three statements in a
+      single try (Statement s = ...) block:
+
+        s.execute("SET FILES CACHE ROWS 10000");
+        s.execute("SET FILES CACHE SIZE 65536");
+        s.execute("SET DATABASE DEFAULT TABLE TYPE CACHED");
+
+      IMPORTANT — correct syntax:
+        • "SET FILES CACHE ROWS <n>" and "SET FILES CACHE SIZE <kb>" are the valid
+          HSQLDB 2.x statements for bounding the in-memory file cache. Do NOT use
+          "SET DATABASE CACHE ROWS/SIZE" — that syntax does not exist and will throw
+          SQLSyntaxErrorException: unexpected token: CACHE.
+        • "SET DATABASE DEFAULT TABLE TYPE CACHED" ensures that any CREATE TABLE
+          statement executed thereafter (without an explicit type keyword) creates a
+          CACHED table rather than a MEMORY table.
+
+      SET FILES CACHE SIZE is in kibibytes; 65536 = 64 MiB.
+
       put into connectionMap; put new AtomicInteger(0) into refCountMap;
   Increment refCountMap.get(dbPath).
   Set activeConnection = conn.
-  Return new PersistNAME(dbPath, conn) after calling createAllTablesAndIndexes().
+  Create and return a new PersistNAME instance after calling, in order:
+    1. createAllTablesAndIndexes()
+    2. migrateTablesToCached()
+
+─── migrateTablesToCached() throws SQLException ───
+  Converts any MEMORY tables that pre-exist on disk (created before this specification
+  was in effect) to CACHED type. This is a one-time migration; it is a no-op for tables
+  that are already CACHED.
+
+  String[] tables = { all type names in declaration order };
+  try (Statement s = conn.createStatement()) {
+      for (String table : tables) {
+          try {
+              s.execute("SET TABLE " + table + " TYPE CACHED");
+          } catch (SQLException ignored) {
+              // already CACHED, or table does not exist yet on a fresh database
+          }
+      }
+  }
+
+  The per-table try/catch is required because HSQLDB throws if the table is already
+  CACHED or does not exist. Swallow the exception silently in both cases.
 
 ─── static Connection getConnection() ───
   Returns activeConnection (throw IllegalStateException if null).
@@ -248,7 +288,10 @@ PERSIST CLASS  (<basePkg>.persist.PersistNAME)
 ─── createTypeName() throws SQLException ───
   try (Statement s = conn.createStatement()) {
       // Only PK columns carry NOT NULL; non-PK columns are nullable by default.
-      s.execute("CREATE TABLE IF NOT EXISTS TypeName (" +
+      // Always use CREATE CACHED TABLE so new tables are disk-backed from the start.
+      // "SET DATABASE DEFAULT TABLE TYPE CACHED" in open() provides a safety net,
+      // but the explicit keyword here is the authoritative guarantee.
+      s.execute("CREATE CACHED TABLE IF NOT EXISTS TypeName (" +
                 "pk1Col TYPE NOT NULL, " +
                 "nonPkCol TYPE, " +          // no NOT NULL
                 "PRIMARY KEY (pk1Col))");
@@ -425,6 +468,12 @@ IMPLEMENTATION CHECKLIST
 □ Cursor next(): auto-close on first null return.
 □ Cursor close(): silent catch on both rs.close() and ps.close().
 □ Lazy PS getters: check isClosed() as well as null.
+□ open(): cache settings use "SET FILES CACHE ROWS <n>" and "SET FILES CACHE SIZE <kb>"
+  — NOT "SET DATABASE CACHE ROWS/SIZE" (that syntax throws SQLSyntaxErrorException).
+□ open(): "SET DATABASE DEFAULT TABLE TYPE CACHED" executed immediately after cache settings.
+□ open(): call migrateTablesToCached() after createAllTablesAndIndexes() to convert any
+  pre-existing MEMORY tables; use per-table try/catch to silently skip already-CACHED tables.
+□ createTypeName(): use "CREATE CACHED TABLE IF NOT EXISTS" — never bare "CREATE TABLE IF NOT EXISTS".
 □ createTypeName(): NOT NULL only on PK columns; non-PK columns nullable by default.
 □ createTypeName(): CREATE INDEX only for indexable NON-PK fields; skip indexable PK fields.
 □ Index naming: idx_TypeName_fieldName (single), idx_TypeName_idxName (composite <index>).

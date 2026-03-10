@@ -1,9 +1,11 @@
 package com.gerken.db.persist;
 
+import com.gerken.db.bean.Caption;
 import com.gerken.db.bean.GalleryAttr;
 import com.gerken.db.bean.Gallery;
 import com.gerken.db.bean.Image;
 import com.gerken.db.bean.Poster;
+import com.gerken.db.cursor.CaptionCursor;
 import com.gerken.db.cursor.GalleryAttrCursor;
 import com.gerken.db.cursor.GalleryCursor;
 import com.gerken.db.cursor.ImageCursor;
@@ -15,6 +17,7 @@ import java.sql.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.codehaus.jettison.json.JSONObject;
 
@@ -22,8 +25,8 @@ import org.codehaus.jettison.json.JSONObject;
  * Single entry point for the crawler-if HSQLDB persistence layer.
  *
  * <p>Manages an embedded HSQLDB file database and provides full CRUD access to the
- * four model types: {@link Poster}, {@link Gallery}, {@link Image}, and
- * {@link GalleryAttr}. Connections are ref-counted: multiple callers opening the
+ * five model types: {@link Poster}, {@link Gallery}, {@link Image}, {@link GalleryAttr},
+ * and {@link Caption}. Connections are ref-counted: multiple callers opening the
  * same database path share one underlying {@link java.sql.Connection}.</p>
  *
  * <h2>Lifecycle</h2>
@@ -55,6 +58,15 @@ public class PersistCrawlerIf {
      * Read by cursor classes via {@link #getConnection()}.
      */
     private static volatile Connection activeConnection;
+
+    /**
+     * Counter used to generate unique Caption ids.
+     * Initialised to {@code System.currentTimeMillis()} at class-load time and
+     * incremented atomically by {@link #nextCaptionId()}. The id is only roughly
+     * epoch-time; exact accuracy is not guaranteed.
+     */
+    private static final AtomicLong captionIdCounter =
+            new AtomicLong(System.currentTimeMillis());
 
     // ─── Instance fields ──────────────────────────────────────────────────────
 
@@ -120,6 +132,20 @@ public class PersistCrawlerIf {
     /** Cached SELECT-by-PK prepared statement for the GalleryAttr table. */
     private PreparedStatement psGalleryAttrGet;
 
+    // Cached PreparedStatements — Caption
+
+    /** Cached INSERT prepared statement for the Caption table. */
+    private PreparedStatement psCaptionInsert;
+
+    /** Cached MERGE (upsert) prepared statement for the Caption table. */
+    private PreparedStatement psCaptionUpsert;
+
+    /** Cached DELETE prepared statement for the Caption table. */
+    private PreparedStatement psCaptionDelete;
+
+    /** Cached SELECT-by-PK prepared statement for the Caption table. */
+    private PreparedStatement psCaptionGet;
+
     // Client statement cache
 
     /** Reusable client-supplied prepared statements, keyed by SQL text. */
@@ -163,6 +189,13 @@ public class PersistCrawlerIf {
         if (conn == null || conn.isClosed()) {
             conn = DriverManager.getConnection(
                     "jdbc:hsqldb:file:" + dbPath + "/db;shutdown=false", "SA", "");
+            // Limit the in-memory row cache so HSQLDB cannot consume unbounded heap on large tables.
+            // Without this, accessing a large Image table causes HSQLDB to cache all rows in RAM.
+            try (Statement s = conn.createStatement()) {
+                s.execute("SET FILES CACHE ROWS 10000");
+                s.execute("SET FILES CACHE SIZE 65536");
+                s.execute("SET DATABASE DEFAULT TABLE TYPE CACHED");
+            }
             connectionMap.put(dbPath, conn);
             refCountMap.put(dbPath, new AtomicInteger(0));
         }
@@ -170,6 +203,7 @@ public class PersistCrawlerIf {
         activeConnection = conn;
         PersistCrawlerIf p = new PersistCrawlerIf(dbPath, conn);
         p.createAllTablesAndIndexes();
+        p.migrateTablesToCached();
         return p;
     }
 
@@ -215,6 +249,10 @@ public class PersistCrawlerIf {
         psGalleryAttrUpsert = nullPs(psGalleryAttrUpsert);
         psGalleryAttrDelete = nullPs(psGalleryAttrDelete);
         psGalleryAttrGet    = nullPs(psGalleryAttrGet);
+        psCaptionInsert     = nullPs(psCaptionInsert);
+        psCaptionUpsert     = nullPs(psCaptionUpsert);
+        psCaptionDelete     = nullPs(psCaptionDelete);
+        psCaptionGet        = nullPs(psCaptionGet);
 
         for (PreparedStatement ps : clientCache.values()) {
             try { ps.close(); } catch (Exception ignored) {}
@@ -252,6 +290,25 @@ public class PersistCrawlerIf {
         createGallery();
         createImage();
         createGalleryAttr();
+        createCaption();
+    }
+
+    /**
+     * Converts any MEMORY tables to CACHED so they are disk-backed and subject to
+     * the file cache limits set in {@link #open(String)}. This is a no-op for tables
+     * that are already CACHED. Needed for databases created before this fix.
+     */
+    private void migrateTablesToCached() throws SQLException {
+        String[] tables = {"Poster", "Gallery", "Image", "GalleryAttr", "Caption"};
+        try (Statement s = conn.createStatement()) {
+            for (String table : tables) {
+                try {
+                    s.execute("SET TABLE " + table + " TYPE CACHED");
+                } catch (SQLException ignored) {
+                    // Already CACHED, or table doesn't exist yet — either is fine
+                }
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -265,7 +322,7 @@ public class PersistCrawlerIf {
      */
     public void createPoster() throws SQLException {
         try (Statement s = conn.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS Poster (" +
+            s.execute("CREATE CACHED TABLE IF NOT EXISTS Poster (" +
                       "name VARCHAR(32672) NOT NULL, " +
                       "url VARCHAR(32672), " +
                       "color VARCHAR(32672), " +
@@ -540,7 +597,7 @@ public class PersistCrawlerIf {
      */
     public void createGallery() throws SQLException {
         try (Statement s = conn.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS Gallery (" +
+            s.execute("CREATE CACHED TABLE IF NOT EXISTS Gallery (" +
                       "id VARCHAR(32672) NOT NULL, " +
                       "poster VARCHAR(32672), " +
                       "name VARCHAR(32672), " +
@@ -854,7 +911,7 @@ public class PersistCrawlerIf {
      */
     public void createImage() throws SQLException {
         try (Statement s = conn.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS Image (" +
+            s.execute("CREATE CACHED TABLE IF NOT EXISTS Image (" +
                       "pageId VARCHAR(32672) NOT NULL, " +
                       "galleryId VARCHAR(32672), " +
                       "pageUrl VARCHAR(32672), " +
@@ -1158,7 +1215,7 @@ public class PersistCrawlerIf {
      */
     public void createGalleryAttr() throws SQLException {
         try (Statement s = conn.createStatement()) {
-            s.execute("CREATE TABLE IF NOT EXISTS GalleryAttr (" +
+            s.execute("CREATE CACHED TABLE IF NOT EXISTS GalleryAttr (" +
                       "name VARCHAR(32672) NOT NULL, " +
                       "score VARCHAR(32672), " +
                       "factor INTEGER, " +
@@ -1427,6 +1484,293 @@ public class PersistCrawlerIf {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // Caption
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Returns the next unique Caption id.
+     *
+     * <p>The counter is initialised to {@code System.currentTimeMillis()} at class-load
+     * time and incremented atomically on each call. The returned value is only
+     * approximately the current time; exact accuracy is not guaranteed.</p>
+     *
+     * @return a unique {@code long} suitable for use as a Caption primary key
+     */
+    public static long nextCaptionId() {
+        return captionIdCounter.getAndIncrement();
+    }
+
+    /**
+     * Creates the {@code Caption} table if it does not already exist.
+     *
+     * @throws SQLException if DDL execution fails
+     */
+    public void createCaption() throws SQLException {
+        try (Statement s = conn.createStatement()) {
+            s.execute("CREATE CACHED TABLE IF NOT EXISTS Caption (" +
+                      "id BIGINT NOT NULL, " +
+                      "imageId VARCHAR(32672), " +
+                      "caption VARCHAR(32672), " +
+                      "PRIMARY KEY (id))");
+        }
+    }
+
+    /**
+     * Drops the {@code Caption} table.
+     *
+     * <p>All cached prepared statements for Caption are closed and nulled before the
+     * drop to prevent HSQLDB from throwing because the statements still reference
+     * the table.</p>
+     *
+     * @throws SQLException if DDL execution fails
+     */
+    public void dropCaption() throws SQLException {
+        psCaptionInsert = nullPs(psCaptionInsert);
+        psCaptionUpsert = nullPs(psCaptionUpsert);
+        psCaptionDelete = nullPs(psCaptionDelete);
+        psCaptionGet    = nullPs(psCaptionGet);
+        try (Statement s = conn.createStatement()) {
+            s.execute("DROP TABLE IF EXISTS Caption");
+        }
+    }
+
+    /**
+     * Returns the cached INSERT prepared statement for Caption, (re)preparing if needed.
+     *
+     * @return the INSERT prepared statement
+     * @throws SQLException if preparation fails
+     */
+    private PreparedStatement captionInsertStmt() throws SQLException {
+        if (psCaptionInsert == null || psCaptionInsert.isClosed())
+            psCaptionInsert = conn.prepareStatement(
+                    "INSERT INTO Caption (id, imageId, caption) VALUES (?, ?, ?)");
+        return psCaptionInsert;
+    }
+
+    /**
+     * Returns the cached MERGE (upsert) prepared statement for Caption, (re)preparing if needed.
+     *
+     * @return the MERGE prepared statement
+     * @throws SQLException if preparation fails
+     */
+    private PreparedStatement captionUpsertStmt() throws SQLException {
+        if (psCaptionUpsert == null || psCaptionUpsert.isClosed())
+            psCaptionUpsert = conn.prepareStatement(
+                    "MERGE INTO Caption USING (VALUES (?, ?, ?)) AS t(id, imageId, caption) " +
+                    "ON Caption.id = t.id " +
+                    "WHEN MATCHED THEN UPDATE SET imageId = t.imageId, caption = t.caption " +
+                    "WHEN NOT MATCHED THEN INSERT (id, imageId, caption) VALUES (t.id, t.imageId, t.caption)");
+        return psCaptionUpsert;
+    }
+
+    /**
+     * Returns the cached DELETE prepared statement for Caption, (re)preparing if needed.
+     *
+     * @return the DELETE prepared statement
+     * @throws SQLException if preparation fails
+     */
+    private PreparedStatement captionDeleteStmt() throws SQLException {
+        if (psCaptionDelete == null || psCaptionDelete.isClosed())
+            psCaptionDelete = conn.prepareStatement("DELETE FROM Caption WHERE id = ?");
+        return psCaptionDelete;
+    }
+
+    /**
+     * Returns the cached SELECT-by-PK prepared statement for Caption, (re)preparing if needed.
+     *
+     * @return the SELECT-by-PK prepared statement
+     * @throws SQLException if preparation fails
+     */
+    private PreparedStatement captionGetStmt() throws SQLException {
+        if (psCaptionGet == null || psCaptionGet.isClosed())
+            psCaptionGet = conn.prepareStatement(
+                    "SELECT id, imageId, caption FROM Caption WHERE id = ?");
+        return psCaptionGet;
+    }
+
+    /**
+     * Binds all fields of {@code r} to the given prepared statement in column order.
+     *
+     * @param ps the prepared statement to bind into
+     * @param r  the Caption whose fields should be bound
+     * @throws SQLException if a bind call fails
+     */
+    private static void bindCaption(PreparedStatement ps, Caption r) throws SQLException {
+        ps.setLong(1, r.getId());
+        ps.setString(2, r.getImageId());
+        ps.setString(3, r.getCaption());
+    }
+
+    /**
+     * Reads the current row of {@code rs} into a new {@link Caption}.
+     *
+     * @param rs a result set positioned on the row to read
+     * @return a populated Caption
+     * @throws SQLException if a column read fails
+     */
+    private static Caption captionFromRs(ResultSet rs) throws SQLException {
+        Caption r = new Caption(rs.getLong("id"));
+        r.setImageId(rs.getString("imageId"));
+        r.setCaption(rs.getString("caption"));
+        return r;
+    }
+
+    /**
+     * Opens a forward-only cursor over Caption rows matching the given SQL clauses.
+     *
+     * @param clauses optional SQL clauses to append (e.g. {@code "WHERE imageId = '123'"}),
+     *                or {@code null} to fetch all rows
+     * @return a new {@link CaptionCursor}
+     * @throws SQLException if the query fails
+     */
+    public CaptionCursor selectCaption(String clauses) throws SQLException {
+        return CaptionCursor.select(clauses);
+    }
+
+    /**
+     * Inserts a single Caption row.
+     *
+     * @param row the Caption to insert
+     * @return the row count (1 on success)
+     * @throws SQLException if the insert fails (e.g. duplicate key)
+     */
+    public int insert(Caption row) throws SQLException {
+        PreparedStatement ps = captionInsertStmt();
+        bindCaption(ps, row);
+        return ps.executeUpdate();
+    }
+
+    /**
+     * Inserts all elements of {@code rows} as a batch.
+     *
+     * @param rows the rows to insert
+     * @return per-row update counts from {@link PreparedStatement#executeBatch()}
+     * @throws SQLException if the batch insert fails
+     */
+    public int[] insert(Caption[] rows) throws SQLException {
+        return insert(rows, 0, rows.length);
+    }
+
+    /**
+     * Inserts a slice of {@code rows} as a batch.
+     *
+     * @param rows   the source array
+     * @param offset index of the first element to insert
+     * @param len    number of elements to insert
+     * @return per-row update counts from {@link PreparedStatement#executeBatch()}
+     * @throws SQLException if the batch insert fails
+     */
+    public int[] insert(Caption[] rows, int offset, int len) throws SQLException {
+        PreparedStatement ps = captionInsertStmt();
+        for (int i = offset; i < offset + len; i++) { bindCaption(ps, rows[i]); ps.addBatch(); }
+        return ps.executeBatch();
+    }
+
+    /**
+     * Deletes the Caption row identified by {@code row}'s primary key.
+     *
+     * @param row the Caption to delete
+     * @return the row count (1 if found, 0 if not)
+     * @throws SQLException if the delete fails
+     */
+    public int delete(Caption row) throws SQLException {
+        return deleteCaption(row.getId());
+    }
+
+    /**
+     * Deletes all elements of {@code rows} as a batch.
+     *
+     * @param rows the rows to delete
+     * @return per-row update counts from {@link PreparedStatement#executeBatch()}
+     * @throws SQLException if the batch delete fails
+     */
+    public int[] delete(Caption[] rows) throws SQLException {
+        return delete(rows, 0, rows.length);
+    }
+
+    /**
+     * Deletes a slice of {@code rows} as a batch.
+     *
+     * @param rows   the source array
+     * @param offset index of the first element to delete
+     * @param len    number of elements to delete
+     * @return per-row update counts from {@link PreparedStatement#executeBatch()}
+     * @throws SQLException if the batch delete fails
+     */
+    public int[] delete(Caption[] rows, int offset, int len) throws SQLException {
+        PreparedStatement ps = captionDeleteStmt();
+        for (int i = offset; i < offset + len; i++) { ps.setLong(1, rows[i].getId()); ps.addBatch(); }
+        return ps.executeBatch();
+    }
+
+    /**
+     * Deletes the Caption row with the given primary key.
+     *
+     * @param id the caption id (primary key)
+     * @return the row count (1 if found, 0 if not)
+     * @throws SQLException if the delete fails
+     */
+    public int deleteCaption(long id) throws SQLException {
+        PreparedStatement ps = captionDeleteStmt();
+        ps.setLong(1, id);
+        return ps.executeUpdate();
+    }
+
+    /**
+     * Inserts or updates a single Caption row (MERGE / upsert).
+     *
+     * @param row the Caption to upsert
+     * @return the row count
+     * @throws SQLException if the upsert fails
+     */
+    public int upsert(Caption row) throws SQLException {
+        PreparedStatement ps = captionUpsertStmt();
+        bindCaption(ps, row);
+        return ps.executeUpdate();
+    }
+
+    /**
+     * Upserts all elements of {@code rows} as a batch.
+     *
+     * @param rows the rows to upsert
+     * @return per-row update counts from {@link PreparedStatement#executeBatch()}
+     * @throws SQLException if the batch upsert fails
+     */
+    public int[] upsert(Caption[] rows) throws SQLException {
+        return upsert(rows, 0, rows.length);
+    }
+
+    /**
+     * Upserts a slice of {@code rows} as a batch.
+     *
+     * @param rows   the source array
+     * @param offset index of the first element to upsert
+     * @param len    number of elements to upsert
+     * @return per-row update counts from {@link PreparedStatement#executeBatch()}
+     * @throws SQLException if the batch upsert fails
+     */
+    public int[] upsert(Caption[] rows, int offset, int len) throws SQLException {
+        PreparedStatement ps = captionUpsertStmt();
+        for (int i = offset; i < offset + len; i++) { bindCaption(ps, rows[i]); ps.addBatch(); }
+        return ps.executeBatch();
+    }
+
+    /**
+     * Retrieves the Caption with the given primary key.
+     *
+     * @param id the caption id (primary key)
+     * @return the matching Caption, or {@code null} if not found
+     * @throws SQLException if the query fails
+     */
+    public Caption getCaption(long id) throws SQLException {
+        PreparedStatement ps = captionGetStmt();
+        ps.setLong(1, id);
+        try (ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? captionFromRs(rs) : null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // Null-safe bind helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1553,7 +1897,8 @@ public class PersistCrawlerIf {
      */
     public void backup(String backupPath) throws Exception {
         Files.createDirectories(Paths.get(backupPath));
-        ExecutorService executor = Executors.newFixedThreadPool(4);
+        logHeap("backup start");
+        ExecutorService executor = Executors.newFixedThreadPool(5);
         List<Future<?>> futures = new ArrayList<>();
 
         futures.add(executor.submit((Callable<Void>) () -> {
@@ -1602,8 +1947,20 @@ public class PersistCrawlerIf {
             return null;
         }));
 
+        futures.add(executor.submit((Callable<Void>) () -> {
+            try (Connection c = newConn();
+                 Statement st = c.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT id, imageId, caption FROM Caption")) {
+                try (BufferedWriter w = Files.newBufferedWriter(Paths.get(backupPath, "Caption.json"))) {
+                    while (rs.next()) { w.write(captionFromRs(rs).asJson().toString()); w.newLine(); }
+                }
+            }
+            return null;
+        }));
+
         executor.shutdown();
         for (Future<?> f : futures) f.get();
+        logHeap("backup end");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1625,44 +1982,38 @@ public class PersistCrawlerIf {
         dropGallery();     createGallery();
         dropImage();       createImage();
         dropGalleryAttr(); createGalleryAttr();
+        dropCaption();     createCaption();
 
-        ExecutorService executor = Executors.newFixedThreadPool(4);
-        List<Future<?>> futures = new ArrayList<>();
+        restoreTable(backupPath, "Poster",      line -> upsert(new Poster(new JSONObject(line))));
+        restoreTable(backupPath, "Gallery",     line -> upsert(new Gallery(new JSONObject(line))));
+        restoreTable(backupPath, "Image",       line -> upsert(new Image(new JSONObject(line))));
+        restoreTable(backupPath, "GalleryAttr", line -> upsert(new GalleryAttr(new JSONObject(line))));
+        restoreTable(backupPath, "Caption",     line -> upsert(new Caption(new JSONObject(line))));
+    }
 
-        futures.add(executor.submit((Callable<Void>) () -> {
-            List<JSONObject> lines = readJsonLines(backupPath, "Poster");
-            Poster[] beans = new Poster[lines.size()];
-            for (int i = 0; i < lines.size(); i++) beans[i] = new Poster(lines.get(i));
-            if (beans.length > 0) upsert(beans);
-            return null;
-        }));
+    @FunctionalInterface
+    private interface LineProcessor {
+        void process(String line) throws Exception;
+    }
 
-        futures.add(executor.submit((Callable<Void>) () -> {
-            List<JSONObject> lines = readJsonLines(backupPath, "Gallery");
-            Gallery[] beans = new Gallery[lines.size()];
-            for (int i = 0; i < lines.size(); i++) beans[i] = new Gallery(lines.get(i));
-            if (beans.length > 0) upsert(beans);
-            return null;
-        }));
+    private static void restoreTable(String backupPath, String typeName, LineProcessor processor) throws Exception {
+        Path file = Paths.get(backupPath, typeName + ".json");
+        if (!Files.exists(file)) return;
+        logHeap("restore " + typeName + " start");
+        try (BufferedReader r = Files.newBufferedReader(file)) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                line = line.trim();
+                if (!line.isEmpty()) processor.process(line);
+            }
+        }
+        logHeap("restore " + typeName + " end");
+    }
 
-        futures.add(executor.submit((Callable<Void>) () -> {
-            List<JSONObject> lines = readJsonLines(backupPath, "Image");
-            Image[] beans = new Image[lines.size()];
-            for (int i = 0; i < lines.size(); i++) beans[i] = new Image(lines.get(i));
-            if (beans.length > 0) upsert(beans);
-            return null;
-        }));
-
-        futures.add(executor.submit((Callable<Void>) () -> {
-            List<JSONObject> lines = readJsonLines(backupPath, "GalleryAttr");
-            GalleryAttr[] beans = new GalleryAttr[lines.size()];
-            for (int i = 0; i < lines.size(); i++) beans[i] = new GalleryAttr(lines.get(i));
-            if (beans.length > 0) upsert(beans);
-            return null;
-        }));
-
-        executor.shutdown();
-        for (Future<?> f : futures) f.get();
+    private static void logHeap(String label) {
+        Runtime rt = Runtime.getRuntime();
+        long usedMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
+        System.out.println("[heap] " + label + " used=" + usedMb + "MB total=" + rt.totalMemory() / (1024 * 1024) + "MB max=" + rt.maxMemory() / (1024 * 1024) + "MB");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
