@@ -41,7 +41,7 @@ public class ImageCursor implements AutoCloseable {
      * Opens a cursor over all Image rows that match the given SQL clauses.
      *
      * <p>The cursor reads all columns ({@code pageId, galleryId, pageUrl, imageId,
-     * imageUrl, filename, score, state}) from the {@code Image} table. The optional
+     * imageUrl, filename, score, state, originalFilename}) from the {@code Image} table. The optional
      * {@code clauses} string is appended directly to the base SELECT; it may contain
      * {@code WHERE}, {@code ORDER BY}, {@code LIMIT}, or any other trailing SQL
      * fragment.</p>
@@ -53,7 +53,7 @@ public class ImageCursor implements AutoCloseable {
      */
     public static ImageCursor select(String clauses) throws SQLException {
         Connection conn = PersistCrawlerIf.getConnection();
-        String sql = "SELECT pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state FROM Image";
+        String sql = "SELECT pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state, originalFilename FROM Image";
         if (clauses != null && !clauses.isBlank()) sql += " " + clauses;
         PreparedStatement ps = conn.prepareStatement(sql);
         return new ImageCursor(ps, ps.executeQuery());
@@ -105,6 +105,7 @@ public class ImageCursor implements AutoCloseable {
         bean.setFilename(rs.getString("filename"));
         int score = rs.getInt("score"); bean.setScore(rs.wasNull() ? null : score);
         bean.setState(rs.getString("state"));
+        bean.setOriginalFilename(rs.getString("originalFilename"));
         return bean;
     }
 

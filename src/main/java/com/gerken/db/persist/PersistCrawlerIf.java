@@ -204,6 +204,7 @@ public class PersistCrawlerIf {
         PersistCrawlerIf p = new PersistCrawlerIf(dbPath, conn);
         p.createAllTablesAndIndexes();
         p.migrateTablesToCached();
+        p.migrateImageOriginalFilename();
         return p;
     }
 
@@ -309,6 +310,64 @@ public class PersistCrawlerIf {
                 }
             }
         }
+    }
+
+    /**
+     * Adds the {@code originalFilename} column to the {@code Image} table if it does not
+     * already exist, then populates it for any rows that have {@code imageUrl} set but
+     * {@code originalFilename} still null.
+     *
+     * <p>This migration is idempotent: it is safe to call on every {@link #open(String)}
+     * because the {@code ADD COLUMN} is silently skipped when the column is already present,
+     * and the UPDATE only targets rows where the value is missing.</p>
+     *
+     * @throws SQLException if DDL or DML execution fails
+     */
+    private void migrateImageOriginalFilename() throws SQLException {
+        // 1. Add column if not yet present
+        try (Statement s = conn.createStatement()) {
+            try {
+                s.execute("ALTER TABLE Image ADD COLUMN originalFilename VARCHAR(32672)");
+            } catch (SQLException ignored) {
+                // Column already exists — that's fine
+            }
+        }
+        // 2. Collect rows that need the value computed
+        List<String[]> toUpdate = new ArrayList<>();
+        try (Statement s = conn.createStatement();
+             ResultSet rs = s.executeQuery(
+                     "SELECT pageId, imageUrl FROM Image WHERE originalFilename IS NULL AND imageUrl IS NOT NULL")) {
+            while (rs.next()) {
+                toUpdate.add(new String[]{rs.getString("pageId"), rs.getString("imageUrl")});
+            }
+        }
+        if (!toUpdate.isEmpty()) {
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE Image SET originalFilename = ? WHERE pageId = ?")) {
+                for (String[] row : toUpdate) {
+                    ps.setString(1, deriveOriginalFilename(row[1]));
+                    ps.setString(2, row[0]);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+        }
+    }
+
+    /**
+     * Derives the original filename from an image URL by stripping the query string and
+     * returning the last path segment.
+     *
+     * @param imageUrl the image URL; must not be {@code null}
+     * @return the filename portion of the URL
+     */
+    private static String deriveOriginalFilename(String imageUrl) {
+        if (imageUrl.isBlank()) return imageUrl;
+        String url = imageUrl;
+        int q = url.indexOf('?');
+        if (q >= 0) url = url.substring(0, q);
+        int slash = url.lastIndexOf('/');
+        return slash >= 0 ? url.substring(slash + 1) : url;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -920,6 +979,7 @@ public class PersistCrawlerIf {
                       "filename VARCHAR(32672), " +
                       "score INTEGER, " +
                       "state VARCHAR(32672), " +
+                      "originalFilename VARCHAR(32672), " +
                       "PRIMARY KEY (pageId))");
             s.execute("CREATE INDEX IF NOT EXISTS idx_Image_galleryId ON Image (galleryId)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_Image_pageUrl   ON Image (pageUrl)");
@@ -957,8 +1017,8 @@ public class PersistCrawlerIf {
     private PreparedStatement imageInsertStmt() throws SQLException {
         if (psImageInsert == null || psImageInsert.isClosed())
             psImageInsert = conn.prepareStatement(
-                    "INSERT INTO Image (pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                    "INSERT INTO Image (pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state, originalFilename) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
         return psImageInsert;
     }
 
@@ -972,15 +1032,16 @@ public class PersistCrawlerIf {
         if (psImageUpsert == null || psImageUpsert.isClosed())
             psImageUpsert = conn.prepareStatement(
                     "MERGE INTO Image " +
-                    "USING (VALUES (?, ?, ?, ?, ?, ?, ?, ?)) " +
-                    "AS t(pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state) " +
+                    "USING (VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)) " +
+                    "AS t(pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state, originalFilename) " +
                     "ON Image.pageId = t.pageId " +
                     "WHEN MATCHED THEN UPDATE SET " +
                     "galleryId = t.galleryId, pageUrl = t.pageUrl, imageId = t.imageId, " +
-                    "imageUrl = t.imageUrl, filename = t.filename, score = t.score, state = t.state " +
+                    "imageUrl = t.imageUrl, filename = t.filename, score = t.score, state = t.state, " +
+                    "originalFilename = t.originalFilename " +
                     "WHEN NOT MATCHED THEN INSERT " +
-                    "(pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state) " +
-                    "VALUES (t.pageId, t.galleryId, t.pageUrl, t.imageId, t.imageUrl, t.filename, t.score, t.state)");
+                    "(pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state, originalFilename) " +
+                    "VALUES (t.pageId, t.galleryId, t.pageUrl, t.imageId, t.imageUrl, t.filename, t.score, t.state, t.originalFilename)");
         return psImageUpsert;
     }
 
@@ -1005,7 +1066,7 @@ public class PersistCrawlerIf {
     private PreparedStatement imageGetStmt() throws SQLException {
         if (psImageGet == null || psImageGet.isClosed())
             psImageGet = conn.prepareStatement(
-                    "SELECT pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state " +
+                    "SELECT pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state, originalFilename " +
                     "FROM Image WHERE pageId = ?");
         return psImageGet;
     }
@@ -1027,6 +1088,7 @@ public class PersistCrawlerIf {
         ps.setString(6, r.getFilename());
         setIntOrNull(ps, 7, r.getScore());
         ps.setString(8, r.getState());
+        ps.setString(9, r.getOriginalFilename());
     }
 
     /**
@@ -1046,6 +1108,7 @@ public class PersistCrawlerIf {
         r.setFilename(rs.getString("filename"));
         int score = rs.getInt("score"); r.setScore(rs.wasNull() ? null : score);
         r.setState(rs.getString("state"));
+        r.setOriginalFilename(rs.getString("originalFilename"));
         return r;
     }
 
@@ -1928,7 +1991,7 @@ public class PersistCrawlerIf {
             try (Connection c = newConn();
                  Statement st = c.createStatement();
                  ResultSet rs = st.executeQuery(
-                         "SELECT pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state FROM Image")) {
+                         "SELECT pageId, galleryId, pageUrl, imageId, imageUrl, filename, score, state, originalFilename FROM Image")) {
                 try (BufferedWriter w = Files.newBufferedWriter(Paths.get(backupPath, "Image.json"))) {
                     while (rs.next()) { w.write(imageFromRs(rs).asJson().toString()); w.newLine(); }
                 }

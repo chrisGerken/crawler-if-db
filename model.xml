@@ -21,7 +21,7 @@
             <field  name="pagesSeen"  	type="Integer" primary="false" >Number of gallery pages that have been processed</field>
             <field  name="quality" 		type="String"  primary="false" indexable="true" >Image size. One of S, M, L, XL</field>
             <field  name="added"   		type="String"  primary="false" indexable="true" >When this gallery was added to the site (or modified) in yyyy-mm-dd format</field>
-            <field  name="state"   		type="String"  primary="false" indexable="true" >Process state for crawl. One of ID(entified as new from gallery page results list), NA(vigating through all of its gallery pages), SA (sample images downloaded, pending approval for continued crawling), IN(ventoried after completing crawl of all gallery pages), KG (keep gallery) or NI (no interest) </field>
+            <field  name="state"   		type="String"  primary="false" indexable="true" >Process state for crawl. One of ID(entified as new from gallery page results list), NA(vigating through all of its gallery pages), SA (sample images downloaded, pending approval for continued crawling), IN(ventoried after completing crawl of all gallery pages), KG (keep gallery), NI (no interest) or FI (finalized: deleted or  exported, but either way, metadata only, no downloaded files) </field>
         </type>
 
         <type  name="Image">
@@ -33,7 +33,8 @@
             <field  name="imageUrl"  	type="String"  primary="false" indexable="true" >The url of the image</field>
             <field  name="filename"     type="String"  primary="false" >The local file name (not the absolute path) of the image</field>
             <field  name="score"   		type="Integer" primary="false" indexable="true" >A user-provided ranking of the image. unscored: -1; poor:0; ok: 1; good:2</field>
-            <field  name="state"   		type="String"  primary="false" indexable="true" >Process state for crawl. One of GP (image discovered on gallery page), IP (information gathered from image page), DL (image downloaded)</field>
+            <field  name="state"   		type="String"  primary="false" indexable="true" >Process state for crawl. One of GP (image discovered on gallery page), IP (information gathered from image page), DL (image downloaded), FI (finalized: deleted or exported)</field>
+            <field  name="originalFilename" type="String" primary="false" >The original filename of the image, derived from the last path segment of imageUrl with query string stripped. Populated at insert/upsert time.</field>
         </type>
 
         <type  name="GalleryAttr">

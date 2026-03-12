@@ -83,8 +83,9 @@ An image in a gallery.
 | imageId   | String    | no  | no       | The image id. Should be the same as the id of the image page that displays the image |
 | imageUrl  | String    | no  | yes      | The URL of the image |
 | filename  | String    | no  | no       | The local file name (not the absolute path) of the image |
-| score     | Integer   | no  | yes      | A user-provided ranking of the image: unscored=-1, poor=0, ok=1, good=2 |
-| state     | String    | no  | yes      | Process state for crawl: GP (image discovered on gallery page), IP (information gathered from image page), DL (image downloaded) |
+| score            | Integer | no  | yes      | A user-provided ranking of the image: unscored=-1, poor=0, ok=1, good=2 |
+| state            | String  | no  | yes      | Process state for crawl: GP (image discovered on gallery page), IP (information gathered from image page), DL (image downloaded) |
+| originalFilename | String  | no  | no       | The original filename of the image; last path segment of imageUrl with query string stripped. Stored in DB; populated by migration on open(). |
 
 ### GalleryAttr
 A string indicating the subject matter or context of the images in a gallery. Can be used to automatically prioritize crawl navigation.
@@ -334,10 +335,12 @@ return ps;
 - **Caption** type added (March 2026): `id` (Long PK, generated via `nextCaptionId()`),
   `imageId` (String), `caption` (String). No non-PK indexes. Thread pool size in
   backup is now 5.
-- **Image.getOriginalFilename()** added (March 2026): derives the original filename from
-  `imageUrl` by stripping the query string and returning the last path segment.
-- **Image.asJson()** updated (March 2026): now includes `originalFilename` as a derived
-  export-only field. It is not read back during JSON import (constructor ignores it).
+- **Image.originalFilename** promoted to first-class DB column (March 2026): no longer
+  a computed-only attribute. `getOriginalFilename()` now returns the stored field;
+  `setOriginalFilename(String)` setter added. JSON constructor reads it; `asJson()` writes it.
+  `migrateImageOriginalFilename()` runs on every `open()` — adds the column if absent and
+  back-fills existing rows using `deriveOriginalFilename(imageUrl)`. Consuming projects that
+  independently derived the filename from `imageUrl` should be updated to use the getter.
 - **restore() rewritten (March 2026)**: no longer parallel; streams line-by-line sequentially
   per table via `restoreTable()` + `LineProcessor` to avoid loading entire tables into heap.
 - **ImageCursor now implements AutoCloseable (March 2026)**: `close()` already existed;

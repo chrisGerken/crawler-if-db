@@ -46,6 +46,12 @@ public class Image {
     private String state;
 
     /**
+     * The original filename of the image, derived from the last path segment of
+     * {@link #imageUrl} with the query string stripped. Stored in the database.
+     */
+    private String originalFilename;
+
+    /**
      * Constructs an Image with the given primary key.
      * All non-PK fields are left {@code null} and should be populated via setters.
      *
@@ -70,8 +76,9 @@ public class Image {
         if (json.has("imageId")   && !json.isNull("imageId"))   this.imageId   = json.getString("imageId");
         if (json.has("imageUrl")  && !json.isNull("imageUrl"))  this.imageUrl  = json.getString("imageUrl");
         if (json.has("filename")  && !json.isNull("filename"))  this.filename  = json.getString("filename");
-        if (json.has("score")     && !json.isNull("score"))     this.score     = json.getInt("score");
-        if (json.has("state")     && !json.isNull("state"))     this.state     = json.getString("state");
+        if (json.has("score")            && !json.isNull("score"))            this.score            = json.getInt("score");
+        if (json.has("state")            && !json.isNull("state"))            this.state            = json.getString("state");
+        if (json.has("originalFilename") && !json.isNull("originalFilename")) this.originalFilename = json.getString("originalFilename");
     }
 
     /**
@@ -186,24 +193,22 @@ public class Image {
     public void setState(String state)         { this.state     = state; }
 
     /**
-     * Returns the original filename derived from {@link #getImageUrl()}.
+     * Returns the original filename of the image as stored in the database.
      *
-     * <p>Extracts the last path segment of the image URL, stripping any query string.
-     * For example, {@code https://cdn.example.com/images/1008780597.jfif?secure=abc}
-     * returns {@code "1008780597.jfif"}.</p>
+     * <p>This is the last path segment of {@link #getImageUrl()} with any query
+     * string stripped, populated at insert/upsert time by
+     * {@code PersistCrawlerIf.migrateImageOriginalFilename()}.</p>
      *
-     * @return the filename portion of the image URL, {@code null} if {@code imageUrl} is
-     *         {@code null}, or a blank string if {@code imageUrl} is blank
+     * @return the stored original filename, or {@code null} if not set
      */
-    public String getOriginalFilename() {
-        if (imageUrl == null) return null;
-        if (imageUrl.isBlank()) return imageUrl;
-        String url = imageUrl;
-        int q = url.indexOf('?');
-        if (q >= 0) url = url.substring(0, q);
-        int slash = url.lastIndexOf('/');
-        return slash >= 0 ? url.substring(slash + 1) : url;
-    }
+    public String getOriginalFilename() { return originalFilename; }
+
+    /**
+     * Sets the original filename of the image.
+     *
+     * @param originalFilename the filename, or {@code null} to clear
+     */
+    public void setOriginalFilename(String originalFilename) { this.originalFilename = originalFilename; }
 
     /**
      * Two Image instances are equal when their {@code pageId} (primary key) is equal.
@@ -239,7 +244,8 @@ public class Image {
         return "Image[pageId=" + pageId + ", galleryId=" + galleryId +
                ", pageUrl=" + pageUrl + ", imageId=" + imageId +
                ", imageUrl=" + imageUrl + ", filename=" + filename +
-               ", score=" + score + ", state=" + state + "]";
+               ", score=" + score + ", state=" + state +
+               ", originalFilename=" + originalFilename + "]";
     }
 
     /**
@@ -260,10 +266,9 @@ public class Image {
         json.put("imageId",          imageId   == null ? JSONObject.NULL : imageId);
         json.put("imageUrl",         imageUrl  == null ? JSONObject.NULL : imageUrl);
         json.put("filename",         filename  == null ? JSONObject.NULL : filename);
-        json.put("score",            score     == null ? JSONObject.NULL : score);
-        json.put("state",            state     == null ? JSONObject.NULL : state);
-        String orig = getOriginalFilename();
-        json.put("originalFilename", orig      == null ? JSONObject.NULL : orig);
+        json.put("score",            score            == null ? JSONObject.NULL : score);
+        json.put("state",            state            == null ? JSONObject.NULL : state);
+        json.put("originalFilename", originalFilename == null ? JSONObject.NULL : originalFilename);
         return json;
     }
 }

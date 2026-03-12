@@ -103,6 +103,7 @@ try {
   <tr><td>filename</td><td>String</td><td>no</td><td>yes</td><td>no</td><td>The local file name (not the absolute path) of the image</td></tr>
   <tr><td>score</td><td>Integer</td><td>no</td><td>yes</td><td>yes</td><td>A user-provided ranking of the image. unscored: -1; poor: 0; ok: 1; good: 2</td></tr>
   <tr><td>state</td><td>String</td><td>no</td><td>yes</td><td>yes</td><td>Process state for crawl. One of: GP (image discovered on gallery page), IP (information gathered from image page), DL (image downloaded)</td></tr>
+  <tr><td>originalFilename</td><td>String</td><td>no</td><td>yes</td><td>no</td><td>The original filename of the image; derived from the last path segment of imageUrl with query string stripped. Populated at insert/upsert time.</td></tr>
 </table>
 
 <h3>GalleryAttr</h3>
