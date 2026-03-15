@@ -7,4 +7,4 @@
 
 
    
-4) update any .md files in order to better recover the current session context in the next session
+10) update any .md files in order to better recover the current session context in the next session
